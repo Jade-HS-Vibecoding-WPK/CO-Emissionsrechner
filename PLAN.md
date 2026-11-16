@@ -10,7 +10,13 @@ Optional soll ein 3D-Modell zur Prüfung eingereicht werden können. Der erste r
 
 ## Verbindliche Daten- und Bewertungsgrundsätze
 
-- Als fachliche Datenquellen sind ausschließlich ÖKOBAUDAT und veröffentlichte Daten beziehungsweise Informationen auf offiziellen Seiten des Bundesministeriums für Wohnen, Stadtentwicklung und Bauwesen (BMWSB), des Bundesministeriums für Wirtschaft und Energie (BMWE) sowie des Bundesministeriums für Umwelt, Klimaschutz, Naturschutz und nukleare Sicherheit (BMUKN) zugelassen. Drittanbieter-Datenbanken, Herstellerangaben und sonstige externe Datenquellen werden nicht als Bewertungsgrundlage verwendet.
+- Für ökologische Kennwerte, Ampeln und Vergleiche werden ausschließlich nachvollziehbare und methodisch vergleichbare ÖKOBAUDAT-/Ministeriums-Daten verwendet. Verfügbare produktspezifische EPDs oder Ökobilanzbelege können als ergänzende Nachweise angezeigt und berücksichtigt werden, wenn Methode, Einheit und Bilanzgrenze transparent und für den konkreten Vergleich geeignet sind. EPDs begründen keine frei gewählten Ampelschwellen und erlauben keinen Vergleich außerhalb einer nachvollziehbaren gemeinsamen Methode und Bilanzgrenze.
+- Zusätzlich dürfen die folgenden Seiten ausschließlich für Produktkatalog- und Produktidentifikationsangaben wie Produktname, Produktgruppe und veröffentlichte technische Merkmale herangezogen werden:
+  - Knauf, Produktübersicht: https://knauf.com/de-DE/p/produkte
+  - Wienerberger, Ziegelprodukte: https://www.wienerberger.de/produkte/wand/ziegel.html?xvtxmc_loadmore=2
+  - Bundesverband Ziegel, Produkte: https://www.ziegel.de/produkte
+  - KS-ORIGINAL, Produkte: https://www.ks-original.de/kalksandstein/produkte
+- Katalogangaben und Marketingtexte sind keine Belege für ökologische Kennwerte. Aus ihnen dürfen weder CO₂-Werte noch Ökobilanzresultate, Ampelfarben oder ökologische Rangfolgen abgeleitet werden. Fehlen geeignete ökologische Daten oder belastbare Nachweise, zeigt die App die Bewertung als fehlend beziehungsweise unsicher und benennt die Datenlücke, statt Werte aus Produktbeschreibungen abzuleiten.
 - Für jeden angezeigten Wert werden Quelle, Datensatz/Bezeichnung, Bezugs- beziehungsweise deklarierte Einheit, betrachtete Lebenszyklusmodule oder Bilanzgrenzen, Gültigkeits-/Versionsangabe soweit verfügbar und Abruf- oder Veröffentlichungsstand nachvollziehbar dargestellt. Es wird keine amtliche Empfehlung oder Zertifizierung suggeriert, wenn die Quelle das nicht ausdrücklich aussagt.
 - Die Ampel wird nur angewendet, wenn eine dokumentierte, fachlich begründete Bewertungsregel für die jeweilige Kennzahl, Einheit und Vergleichsgruppe verfügbar ist. Schwellenwerte werden nicht frei erfunden und nicht über inkompatible Einheiten, Produktkategorien oder Lebenszyklusgrenzen hinweg verglichen. Ist keine belastbare Regel vorhanden, zeigt die App den Zahlenwert und seine Einordnung als „nicht klassifiziert“ statt eine scheinbar objektive Farbe.
 - CO₂-Werte sind mit Einheit und Bilanzgrenze auszuweisen; „CO₂-Fußabdruck“ darf nicht unterschiedliche Treibhausgasindikatoren, Module oder deklarierte Einheiten zusammenfassen. Umrechnungen, etwa auf eine Modellmenge, sind nur zulässig, wenn Eingangsdaten und Umrechnungsweg dokumentiert sind.
@@ -22,21 +28,21 @@ Optional soll ein 3D-Modell zur Prüfung eingereicht werden können. Der erste r
 ### Phase 1 – Bestand, Datenzugang und fachliche Bewertungsregeln klären
 
 1. Vorhandene Gestaltung, Navigation und technische Struktur aufnehmen und bewährte Elemente erhalten.
-2. Verfügbarkeit, Nutzungsbedingungen, Aktualisierungsweg und maschinenlesbare Formate der zugelassenen ÖKOBAUDAT- und Ministeriumsquellen prüfen. Die unterstützten Quellen sowie ihr jeweiliger Verwendungszweck werden in einer Quellenübersicht dokumentiert.
+2. Verfügbarkeit, Nutzungsbedingungen und Aktualisierungsweg der ÖKOBAUDAT-/Ministeriumsquellen sowie Verfügbarkeit und Bedingungen der vier zusätzlichen Produktkataloge prüfen. In einer Quellenübersicht werden Quellen und Zweck getrennt dokumentiert: ökologische Bewertungsdaten, ergänzende EPD-/Ökobilanzbelege und reine Produkt-/Katalogangaben.
 3. Für Materialsuche, CO₂-Kennzahlen, Ampel-Schwellen und Alternativen festlegen, welche belastbaren Quellenaussagen tatsächlich verfügbar sind. Nicht durch Quellen gedeckte Regeln bleiben ausdrücklich offen und werden nicht als fertiges Feature eingeplant.
 4. Unterstützte Datenfelder, Einheiten, Lebenszyklusmodule und Umgang mit veralteten oder fehlenden Datensätzen festlegen.
 
-**Abnahme:** Es gibt eine überprüfbare Quellen- und Bewertungsübersicht, die ausschließlich die erlaubten Quellen aufführt. Jede geplante Ampel- und Vergleichsregel ist einer belastbaren Quelle und einer klaren Vergleichsgrundlage zugeordnet; nicht belegbare Regeln sind als offene Punkte markiert.
+**Abnahme:** Es gibt eine überprüfbare Quellen- und Bewertungsübersicht mit den bestehenden ÖKOBAUDAT-/Ministeriumsquellen und den vier zusätzlich genannten Katalogseiten, jeweils mit klar getrenntem Verwendungszweck. Jede Ampel- und Vergleichsregel ist einer belastbaren ökologischen Quelle und einer klaren Vergleichsgrundlage zugeordnet; nicht belegbare Regeln sind als offene Punkte markiert. Produktkataloge und Marketingtexte werden nicht als ökologische Belege geführt.
 
 ### Phase 2 – Einfache Material- und Produktabfrage
 
 1. Eine Freitextsuche ermöglichen, die allgemeine Begriffe wie „Beton“ ohne zwingende Hersteller-, Produkt- oder Typauswahl annimmt.
-2. Ergebnisse bei Bedarf nach Materialgruppe beziehungsweise Datensatz auffächern und die Unterschiede erklären, statt einen einzelnen Treffer als allgemeingültige Bewertung für das Material auszugeben.
+2. Ergebnisse bei Bedarf nach Materialgruppe beziehungsweise Datensatz auffächern und Unterschiede erklären, statt einen einzelnen Treffer als allgemeingültige Bewertung für das Material auszugeben. Die zusätzlichen Katalogquellen können bei der Produktidentifikation und Anzeige von Produktangaben helfen; diese Angaben werden sichtbar von ökologischen Kennwerten und deren Quellen getrennt.
 3. Ökologische Ampel und CO₂-Wert inklusive Einheit, Bezugsgröße, Bilanzgrenze, Datenquelle und Datenstand anzeigen, sofern die Daten eine fachlich gültige Einordnung erlauben.
-4. Bei orange/rot passende bessere Alternativen aus den zugelassenen Quellen anzeigen. Vergleichbarkeit und Gründe für die Empfehlung offenlegen.
+4. Bei orange/rot passende bessere Alternativen anhand geeigneter ÖKOBAUDAT-/Ministeriums-Daten vorschlagen. Produktkataloge können zur Identifikation entsprechender Produkte dienen, nicht als Nachweis ihrer ökologischen Überlegenheit. Vergleichbarkeit und Gründe für die Empfehlung offenlegen.
 5. Für fehlende oder nicht vergleichbare Daten einen verständlichen Zustand wie „keine belastbare Bewertung möglich“ anbieten.
 
-**Abnahme:** Eine Eingabe wie „Beton“ ist ohne weitere Pflichtangaben ausführbar. Das Ergebnis erfindet keine materialspezifische Sicherheit aus einem beliebigen Einzelprodukt; es zeigt Quelle, CO₂-Einheit und Bilanzgrenze. Orange/rot führt nur bei belegtem, vergleichbarem Datensatz zu einer als solche erklärten Alternative. Ohne ausreichende Daten wird keine Ampelfarbe oder scheinbar präzise Rangfolge ausgegeben.
+**Abnahme:** Eine Eingabe wie „Beton“ ist ohne weitere Pflichtangaben ausführbar. Produktangaben aus den vier Katalogen sind klar als solche erkennbar und getrennt von ÖKOBAUDAT-/Ministeriums-Daten und verfügbaren EPD-/Ökobilanzbelegen dargestellt. Das Ergebnis erfindet keine materialspezifische Sicherheit aus einem beliebigen Einzelprodukt oder Marketingtext; es zeigt für ökologische Werte Quelle, CO₂-Einheit und Bilanzgrenze. Orange/rot führt nur bei belegtem, vergleichbarem Datensatz zu einer als solche erklärten Alternative. Ohne ausreichende Daten wird keine Ampelfarbe oder scheinbar präzise Rangfolge ausgegeben.
 
 ### Phase 3 – Optionaler 3D-Modell-Import und Modellprüfung
 
@@ -63,7 +69,7 @@ Optional soll ein 3D-Modell zur Prüfung eingereicht werden können. Der erste r
 ## Explizite Grenzen und offene Prüfungen
 
 - Diese Planung setzt weder voraus, dass jede allgemeine Materialanfrage einen einzelnen eindeutigen ÖKOBAUDAT-Datensatz besitzt, noch dass alle Datensätze zu einer allgemeinen Ampel-Skala zusammengeführt werden können.
-- Ob offizielle Ministeriumsseiten zusätzliche nutzbare Datensätze, Schwellenwerte oder Bewertungsmethoden bereitstellen, ist in Phase 1 anhand ihrer tatsächlichen Inhalte und Bedingungen zu verifizieren. Die bloße Nennung eines Ministeriums ist keine fachliche Begründung für einen Bewertungswert.
+- Ob offizielle Ministeriumsseiten zusätzliche nutzbare Datensätze, Schwellenwerte oder Bewertungsmethoden bereitstellen und ob auf den Katalogseiten produktspezifische EPD-/Ökobilanzbelege verfügbar sind, ist in Phase 1 anhand der tatsächlichen Inhalte und Bedingungen zu verifizieren. Die bloße Nennung eines Ministeriums, Produktbeschreibung oder Werbeaussage ist keine fachliche Begründung für einen ökologischen Bewertungswert.
 - Eine Archicad-Datei im nativen PLN-Format kann proprietäre beziehungsweise nicht offen unterstützte Strukturen enthalten. Der Plan verspricht daher zunächst nur den nach Prüfung konkret unterstützten IFC-Export, nicht den Import jeder Archicad-Version oder beliebiger 3D-Formate.
 - Eine vollständige Gebäude-Ökobilanz ist nur dann möglich, wenn Modellgeometrie, Mengen, Einheiten, Bauteilzuordnungen und passende Datensätze hinreichend vollständig und methodisch kompatibel sind. Andernfalls bleibt das Ergebnis eine partielle, entsprechend gekennzeichnete Auswertung.
 - Umsetzung der Web-App und Integration der Daten beginnen erst nach Prüfung und Freigabe dieses Plans.
