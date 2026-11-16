@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f9fc">
+  <title>Material-Kompass – CO₂ &amp; Ökobilanz</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Material-Kompass Startseite">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <span>Material<span class="brand-light">Kompass</span></span>
+    </a>
+    <a class="header-link" href="https://www.oekobaudat.de/" target="_blank" rel="noreferrer">Datenquelle: ÖKOBAUDAT <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main>
+    <section class="intro">
+      <p class="eyebrow"><span class="eyebrow-dot"></span>Materialien bewusst vergleichen</p>
+      <h1>Ein guter Entwurf<br><span>beginnt mit guten Materialien.</span></h1>
+      <p class="intro-copy">Finde passende ÖKOBAUDAT-Datensätze, vergleiche CO₂-Kennwerte unter gleichen Bezugsbedingungen und erkenne Unterschiede zwischen Produktvarianten. Relative Gruppen gelten nur innerhalb einer passenden Vergleichsgruppe.</p>
+    </section>
+
+    <section class="search-panel" aria-labelledby="search-title">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">DEIN MATERIAL</p>
+          <h2 id="search-title">Womit planst du?</h2>
+        </div>
+        <span class="step-number">01</span>
+      </div>
+      <form id="search-form">
+        <div class="form-grid">
+          <label class="field material-field">
+            <span>Materialname</span>
+            <input id="material-query" name="material" type="search" placeholder="z. B. Beton, Holzfaser, Ziegel" minlength="2" required autocomplete="off">
+          </label>
+          <label class="field use-field">
+            <span>Einsatz im Entwurf <span class="optional">(optional)</span></span>
+            <select id="use-case" name="useCase">
+              <option value="">Einsatz auswählen</option>
+              <option>Außenwand / Fassade</option>
+              <option>Mauerwerk</option>
+              <option>Dämmung</option>
+              <option>Dach</option>
+              <option>Boden / Decke</option>
+              <option>Tragwerk</option>
+              <option>Innenausbau</option>
+              <option>Sonstiges</option>
+            </select>
+          </label>
+          <button class="search-button" type="submit"><span>Suchen</span><span aria-hidden="true">→</span></button>
+        </div>
+        <p class="form-note">Durchsucht den ÖKOBAUDAT-CSV-Export nach Datensätzen gemäß EN 15804+A2 für die Produktionsphase A1–A3. Der Einsatz dient als Kontext für die Alternativenprüfung, schränkt die Treffer aber nicht ein.</p>
+      </form>
+    </section>
+
+    <section id="message" class="message" role="status" aria-live="polite">
+      <span class="message-icon" aria-hidden="true">i</span>
+      <div>
+        <strong>So funktioniert's</strong>
+        <p>Gib einen Materialnamen ein, zum Beispiel „Dämmstoff“ oder „Beton“. Für die erste Suche ist eine Internetverbindung zum ÖKOBAUDAT-Export nötig. Die Daten werden lokal zwischengespeichert.</p>
+      </div>
+    </section>
+
+    <section id="results-section" class="results-section" hidden>
+      <div class="results-heading">
+        <div>
+          <p class="step-label">ÖKOBAUDAT-TREFFER</p>
+          <h2 id="results-title">Suchergebnisse</h2>
+        </div>
+        <span id="results-count" class="results-count"></span>
+      </div>
+      <div class="results-layout">
+        <div id="results-list" class="results-list" aria-label="Material-Datensätze"></div>
+        <aside id="detail-panel" class="detail-panel" aria-live="polite">
+          <div class="empty-detail">
+            <span class="empty-icon" aria-hidden="true">↖</span>
+            <strong>Wähle einen Datensatz</strong>
+            <p>Hier siehst du die Ökobilanzwerte, Datensatzvergleiche und den Status möglicher Materialalternativen.</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="model-panel" aria-labelledby="model-title">
+      <div class="model-copy">
+        <p class="step-label">OPTIONALER MODELL-CHECK</p>
+        <h2 id="model-title">Schon ein IFC-Modell?</h2>
+        <p>Der Archicad-IFC-Import ist hier als Oberfläche vorbereitet. Diese Version lädt oder analysiert die Datei noch nicht – deine Auswahl bleibt auf diesem Gerät.</p>
+        <label class="file-picker" for="model-file">
+          <span class="file-picker-icon" aria-hidden="true">＋</span>
+          <span><strong>IFC-Datei auswählen</strong><small>Archicad-Export · .ifc</small></span>
+          <input id="model-file" type="file" accept=".ifc,application/ifc">
+        </label>
+        <p id="model-status" class="model-status" role="status" aria-live="polite">Noch kein Modell ausgewählt. Native Archicad-PLN-Dateien werden nicht unterstützt.</p>
+      </div>
+      <div class="model-illustration" aria-hidden="true">
+        <div class="model-cube"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+        <span class="model-tag">IFC</span>
+      </div>
+    </section>
+
+    <section class="comparison-legend" aria-labelledby="legend-title">
+      <div class="legend-heading">
+        <span class="legend-symbol" aria-hidden="true">i</span>
+        <div>
+          <h2 id="legend-title">Drei relative Vergleichsgruppen</h2>
+          <p>Die vorläufige Einteilung beruht ausschließlich auf dem GWP-Wert und gilt nur für gültige Datensätze mit gleicher Kategorie, Einheit, Bezugsmenge, Norm und Lebenszyklusphase sowie passendem Namens-/Technikprofil. Sie ist keine absolute Öko-Bewertung und bestätigt keine technische Gleichwertigkeit.</p>
+        </div>
+      </div>
+      <div class="group-legend">
+        <span><strong>gut</strong> · unteres Drittel der GWP-Werte</span>
+        <span><strong>mittel</strong> · mittleres Drittel</span>
+        <span><strong>schlecht</strong> · oberes Drittel</span>
+        <span><strong>nicht klassifiziert</strong> · weniger als drei passende Datensätze oder identische GWP-Werte</span>
+      </div>
+      <p class="group-note">Gleiche GWP-Werte werden nicht getrennt; dadurch können die Gruppen unterschiedlich groß sein.</p>
+    </section>
+
+    <section class="source-note" aria-labelledby="source-title">
+      <div class="source-note-icon" aria-hidden="true">↗</div>
+      <div>
+        <h2 id="source-title">Quellenstatus</h2>
+        <p><strong>ÖKOBAUDAT:</strong> angeschlossen für ökologische Datensätze (EN 15804+A2, A1–A3). Niedrigere GWP-Werte werden nur als Datensatzvergleich innerhalb einer vorläufigen Vergleichsgruppe gezeigt. Eine belastbare Materialsubstitution anhand gleichwertiger Bauteilfunktionen ist noch nicht angebunden.</p>
+        <p><strong>BMWSB, BMWE und BMUKN:</strong> noch nicht angebunden. Produktspezifische EPDs oder ergänzende Ökobilanzbelege werden ebenfalls noch nicht ausgewertet.</p>
+        <p><strong>Knauf, Wienerberger, Bundesverband Ziegel und KS-ORIGINAL:</strong> Produktkataloge sind nicht angebunden und dürfen nur zur Produktidentifikation dienen – nicht als Ökobilanzbeleg.</p>
+        <a href="https://www.oekobaudat.de/service/downloads.html" target="_blank" rel="noreferrer">ÖKOBAUDAT: Daten und Schnittstellen <span aria-hidden="true">↗</span></a>
+        <div class="catalog-links" aria-label="Nicht angebundene Produktkataloge">
+          <a href="https://knauf.com/de-DE/p/produkte" target="_blank" rel="noreferrer">Knauf ↗</a>
+          <a href="https://www.wienerberger.de/produkte/wand/ziegel.html?xvtxmc_loadmore=2" target="_blank" rel="noreferrer">Wienerberger ↗</a>
+          <a href="https://www.ziegel.de/produkte" target="_blank" rel="noreferrer">Bundesverband Ziegel ↗</a>
+          <a href="https://www.ks-original.de/kalksandstein/produkte" target="_blank" rel="noreferrer">KS-ORIGINAL ↗</a>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span>Ein Entwurfswerkzeug für die erste Orientierung.</span>
+      <span>Ökologische Daten ersetzen keine technische Prüfung.</span>
+    </footer>
+  </main>
+</body>
+</html>
