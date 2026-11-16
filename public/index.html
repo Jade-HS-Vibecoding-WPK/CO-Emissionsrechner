@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f9fc">
+  <title>Material-Kompass – CO₂ &amp; Ökobilanz</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Material-Kompass Startseite">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <span>Material<span class="brand-light">Kompass</span></span>
+    </a>
+    <a class="header-link" href="https://www.oekobaudat.de/" target="_blank" rel="noreferrer">Datenquelle: ÖKOBAUDAT <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main>
+    <section class="intro">
+      <p class="eyebrow"><span class="eyebrow-dot"></span>Materialien bewusst vergleichen</p>
+      <h1>Ein guter Entwurf<br><span>beginnt mit guten Materialien.</span></h1>
+      <p class="intro-copy">Finde Ökobilanz-Datensätze zu Baustoffen und entdecke Materialien mit niedrigeren CO₂-Werten – als erste Orientierung für deinen Entwurf.</p>
+    </section>
+
+    <section class="search-panel" aria-labelledby="search-title">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">DEIN MATERIAL</p>
+          <h2 id="search-title">Womit planst du?</h2>
+        </div>
+        <span class="step-number">01</span>
+      </div>
+      <form id="search-form">
+        <div class="form-grid">
+          <label class="field material-field">
+            <span>Materialname</span>
+            <input id="material-query" name="material" type="search" placeholder="z. B. Beton, Holzfaser, Ziegel" minlength="2" required autocomplete="off">
+          </label>
+          <label class="field use-field">
+            <span>Einsatz im Entwurf <span class="optional">(optional)</span></span>
+            <select id="use-case" name="useCase">
+              <option value="">Einsatz auswählen</option>
+              <option>Außenwand / Fassade</option>
+              <option>Dämmung</option>
+              <option>Dach</option>
+              <option>Boden / Decke</option>
+              <option>Tragwerk</option>
+              <option>Innenausbau</option>
+              <option>Sonstiges</option>
+            </select>
+          </label>
+          <button class="search-button" type="submit"><span>Suchen</span><span aria-hidden="true">→</span></button>
+        </div>
+        <p class="form-note">Die Suche greift auf den offiziellen ÖKOBAUDAT-Datenbestand EN 15804+A2 zu. Die Einsatz-Auswahl dient der Einordnung; sie schränkt die Datenbanktreffer nicht ein.</p>
+      </form>
+    </section>
+
+    <section id="message" class="message" role="status" aria-live="polite">
+      <span class="message-icon" aria-hidden="true">i</span>
+      <div>
+        <strong>So funktioniert's</strong>
+        <p>Gib einen Materialnamen ein, zum Beispiel „Dämmstoff“ oder „Beton“. Beim ersten Suchen lädt die App etwa 50 MB ÖKOBAUDAT-Daten; danach verwendet sie den lokalen Zwischenspeicher.</p>
+      </div>
+    </section>
+
+    <section id="results-section" class="results-section" hidden>
+      <div class="results-heading">
+        <div>
+          <p class="step-label">ÖKOBAUDAT-TREFFER</p>
+          <h2 id="results-title">Suchergebnisse</h2>
+        </div>
+        <span id="results-count" class="results-count"></span>
+      </div>
+      <div class="results-layout">
+        <div id="results-list" class="results-list" aria-label="Material-Datensätze"></div>
+        <aside id="detail-panel" class="detail-panel" aria-live="polite">
+          <div class="empty-detail">
+            <span class="empty-icon" aria-hidden="true">↖</span>
+            <strong>Wähle einen Datensatz</strong>
+            <p>Hier siehst du die Ökobilanzwerte und passende Vergleichsmöglichkeiten.</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="traffic-legend" aria-labelledby="legend-title">
+      <div class="legend-heading">
+        <span class="legend-symbol" aria-hidden="true">●</span>
+        <div>
+          <h2 id="legend-title">Die Ampel richtig lesen</h2>
+          <p>Die Farben ordnen nur die passenden ÖKOBAUDAT-Datensätze ein – sie sind kein allgemeines Gütesiegel.</p>
+        </div>
+      </div>
+      <div class="legend-items">
+        <span class="legend-item"><i class="traffic-dot green"></i>Niedriger im Vergleich</span>
+        <span class="legend-item"><i class="traffic-dot orange"></i>Mittlerer Vergleichswert</span>
+        <span class="legend-item"><i class="traffic-dot red"></i>Höher im Vergleich</span>
+      </div>
+    </section>
+
+    <section class="source-note" aria-labelledby="source-title">
+      <div class="source-note-icon" aria-hidden="true">↗</div>
+      <div>
+        <h2 id="source-title">Daten mit nachvollziehbarer Herkunft</h2>
+        <p>Diese erste Version nutzt ÖKOBAUDAT. eLCA ist ein Bauteileditor, der unter anderem ÖKOBAUDAT-Daten verwendet. „LCA Bau“ ist noch nicht eindeutig identifiziert; diese beiden Quellen sind daher nicht separat angebunden.</p>
+        <a href="https://www.oekobaudat.de/service/downloads.html" target="_blank" rel="noreferrer">Mehr über Daten und Schnittstellen <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+
+    <footer>
+      <span>Ein Entwurfswerkzeug für die erste Orientierung.</span>
+      <span>Ökologische Daten ersetzen keine technische Prüfung.</span>
+    </footer>
+  </main>
+</body>
+</html>
