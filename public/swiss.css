@@ -97,6 +97,23 @@ main {
   align-items: center;
   min-height: 490px;
   padding: 76px 0 64px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.intro::before {
+  position: absolute;
+  z-index: -1;
+  inset: 22px 0 10px;
+  background-image:
+    linear-gradient(90deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .74) 38%, rgba(255, 255, 255, .28)),
+    url("/landscape.jpg");
+  background-position: center, center 54%;
+  background-size: cover;
+  content: "";
+  opacity: .84;
+  pointer-events: none;
 }
 
 .intro-copy-block { grid-column: 1 / span 7; }
@@ -117,26 +134,6 @@ h1 {
 
 h1 span { color: #000; font-weight: 400; }
 .intro-copy { max-width: 570px; color: var(--muted); font-size: 15px; line-height: 1.8; }
-
-.hero-tree {
-  grid-column: 9 / span 4;
-  grid-row: 1 / span 2;
-  justify-self: center;
-  width: min(100%, 360px);
-  height: auto;
-  overflow: visible;
-  opacity: .48;
-}
-
-.tree-trunk, .tree-ground {
-  fill: none;
-  stroke: #B7D7B0;
-  stroke-linecap: square;
-  stroke-width: 12;
-}
-
-.tree-ground { stroke-width: 5; }
-.tree-crown circle { fill: #B7D7B0; }
 
 .search-panel, .comparison-legend, .source-note,
 .message, .results-list, .detail-panel, .model-panel {
@@ -270,9 +267,17 @@ input:focus, select:focus { border-color: #000; outline: 3px solid #B7D7B0; box-
 .detail-category { color: var(--muted); }
 
 .gwp-card { margin-top: 22px; padding: 18px; border-left: 5px solid #B7D7B0; border-radius: 0 !important; background: #fff; }
+.gwp-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(128px, .6fr); align-items: stretch; gap: 10px 20px; }
+.gwp-main { min-width: 0; }
 .gwp-label { color: #000; font-size: 10px; font-weight: 650; }
 .gwp-value { color: #000; font-size: 32px; font-weight: 500; }
 .gwp-unit, .gwp-caption { color: var(--muted); }
+.gwp-ranking { display: flex; min-width: 0; flex-direction: column; justify-content: center; padding-left: 20px; border-left: 1px solid var(--line); }
+.gwp-ranking-label { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.gwp-ranking-value { margin-top: 5px; color: #000; font-size: clamp(24px, 3vw, 36px); font-weight: 550; line-height: 1; letter-spacing: -.06em; white-space: nowrap; }
+.gwp-ranking-value span { font-size: 13px; font-weight: 500; letter-spacing: -.02em; }
+.gwp-ranking-group { margin-top: 6px; color: #000; font-size: 12px; font-weight: 650; }
+.gwp-ranking-unavailable { margin-top: 7px; color: #000; font-size: 14px; line-height: 1.2; }
 .metric-heading { color: #000; }
 .metric-grid { gap: 0 16px; }
 .metric { border: 0; border-top: 1px solid var(--line); border-radius: 0 !important; }
@@ -353,7 +358,6 @@ footer {
   .intro { grid-template-columns: repeat(8, minmax(0, 1fr)); column-gap: 20px; min-height: 420px; }
   .intro-copy-block { grid-column: 1 / span 5; }
   .intro-copy { grid-column: 1 / span 5; }
-  .hero-tree { grid-column: 6 / span 3; grid-row: 1 / span 2; width: min(100%, 280px); }
   .results-layout { grid-template-columns: repeat(8, minmax(0, 1fr)); column-gap: 20px; }
   .results-list { grid-column: 1 / span 3; }
   .detail-panel { grid-column: 4 / span 5; }
@@ -387,7 +391,7 @@ footer {
   h1 br { display: none; }
   h1 span { display: block; margin-top: .13em; }
   .intro-copy { font-size: 12px; line-height: 1.65; }
-  .hero-tree { grid-column: 2 / span 2; grid-row: auto; align-self: center; justify-self: center; width: min(80%, 190px); max-height: 210px; margin-top: -12px; }
+  .intro::before { inset: 18px 0 8px; background-position: center, 58% center; }
 
   .search-panel { padding: 21px 17px 18px; }
   .section-heading h2, .results-heading h2 { font-size: 20px; }
@@ -433,8 +437,10 @@ footer {
   .intro { column-gap: 8px; }
   .intro-copy-block, .intro-copy { grid-column: 1 / -1; }
   h1 { font-size: 35px; }
-  .hero-tree { grid-column: 2 / span 2; }
   .search-panel { padding-right: 13px; padding-left: 13px; }
+  .gwp-card { grid-template-columns: minmax(0, 1fr) minmax(94px, .65fr); gap: 8px 12px; padding: 13px 10px; }
+  .gwp-ranking { padding-left: 12px; }
+  .gwp-ranking-value { font-size: 23px; }
   .model-panel { gap: 0; }
   .model-illustration { position: relative; right: auto; bottom: auto; flex-basis: 58px; opacity: .5; }
   .detail-topline { align-items: flex-start; flex-direction: column; }

@@ -625,10 +625,12 @@ function Handle-Request {
         '/styles.css' = 'styles.css'
         '/swiss.css' = 'swiss.css'
         '/app.js' = 'app.js'
+        '/landscape.jpg' = 'landscape.jpg'
+        '/landscape-credit.txt' = 'landscape-credit.txt'
     }
     if ($staticFiles.ContainsKey($path)) {
         $file = Join-Path (Join-Path $script:Root 'public') $staticFiles[$path]
-        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js') { 'text/javascript; charset=utf-8' } else { 'text/css; charset=utf-8' }
+        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/landscape.jpg') { 'image/jpeg' } elseif ($path -eq '/landscape-credit.txt') { 'text/plain; charset=utf-8' } else { 'text/css; charset=utf-8' }
         $bytes = [System.IO.File]::ReadAllBytes($file)
         Send-Response -Context $Context -StatusCode 200 -ContentType $contentType -Body $bytes
         return

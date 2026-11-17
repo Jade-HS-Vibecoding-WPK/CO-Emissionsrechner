@@ -223,6 +223,7 @@ function renderDetail(data) {
       ? "Die GWP-Werte dieser Vergleichsgruppe sind identisch; eine relative Abstufung ist nicht möglich."
       : `Relative Einordnung: ${data.rating.Group} (Rang ${formatNumber(data.rating.Rank)} von ${formatNumber(data.rating.Count)} innerhalb dieser Vergleichsgruppe). Das ist keine absolute Öko-Bewertung.`;
   const interpretationNote = `${useNote} ${ratingNote} Angezeigt wird nur die Produktionsphase A1–A3, nicht der gesamte Lebenszyklus. Negative CO₂-Werte können biogenen Kohlenstoff im Material abbilden und bedeuten nicht automatisch eine negative Gesamtbilanz.`;
+  const hasRank = Number.isFinite(data.rating.Rank) && Number.isFinite(data.rating.Count);
 
   detailPanel.innerHTML = `
     <div class="detail-content">
@@ -233,10 +234,20 @@ function renderDetail(data) {
       <h2 class="detail-title">${escapeHtml(item.Name)}</h2>
       <p class="detail-category">${escapeHtml(item.Category || "Kategorie nicht angegeben")}</p>
       <div class="gwp-card">
-        <span class="gwp-label">Treibhauspotenzial · GWP total</span>
-        <strong class="gwp-value">${formatNumber(item.Gwp)}</strong>
-        <span class="gwp-unit">kg CO₂-Äquivalent ${reference}</span>
-        <div class="gwp-caption">Produktionsphase A1–A3 · DIN EN 15804+A2</div>
+        <div class="gwp-main">
+          <span class="gwp-label">Treibhauspotenzial · GWP total</span>
+          <strong class="gwp-value">${formatNumber(item.Gwp)}</strong>
+          <span class="gwp-unit">kg CO₂-Äquivalent ${reference}</span>
+          <div class="gwp-caption">Produktionsphase A1–A3 · DIN EN 15804+A2</div>
+        </div>
+        <aside class="gwp-ranking" aria-label="Relative Rangordnung">
+          <span class="gwp-ranking-label">${hasRank ? "Rang in Vergleichsgruppe" : "Einordnung"}</span>
+          ${hasRank
+            ? `<strong class="gwp-ranking-value">${formatNumber(data.rating.Rank)}<span> von ${formatNumber(data.rating.Count)}</span></strong>
+              <span class="gwp-ranking-group">${escapeHtml(data.rating.Group)}</span>`
+            : `<strong class="gwp-ranking-unavailable">${escapeHtml(data.rating.Group || "nicht vergleichbar")}</strong>
+              <span class="gwp-ranking-group">Keine vergleichbare Rangzahl</span>`}
+        </aside>
       </div>
       ${metrics}
       <dl class="metadata">
