@@ -6,12 +6,19 @@ Lokaler Prototyp für die Suche nach Baustoff-Datensätzen und den Vergleich aus
 
 Unter Windows `Start-App.bat` öffnen. Die App läuft lokal unter `http://127.0.0.1:8765/`. Für die erste Suche ist eine Internetverbindung zur offiziellen ÖKOBAUDAT-Downloadseite und zum dort verlinkten CSV-Export erforderlich.
 
+## GitHub-Pages-Demo
+
+Der Workflow unter `.github/workflows/pages.yml` veröffentlicht nach Änderungen auf `main` eine statische Demo. Dafür müssen GitHub Pages für das Repository auf „GitHub Actions“ eingestellt sein. Die statischen Dateien verwenden relative Pfade, damit sie auch unter dem Projektpfad von GitHub Pages funktionieren.
+
+Die Pages-Demo verwendet ausschließlich lokale, synthetische Beispieldaten. Ihre GWP-Zahlen haben keine Quellenangabe und sind keine realen oder geprüften Ökobilanzwerte. Live-ÖKOBAUDAT-Suche und Backend-Funktionen sind dort nicht verfügbar. Der IFC-Import bleibt lokal im Browser; eine daraus angezeigte Rechenvorschau nutzt ebenfalls nur diese synthetischen Werte. Der lokale Start über `Start-App.bat` behält dagegen die Backend-Suche.
+
 ## Tests
 
 Die fokussierten IFC-Parser- und Berechnungstests benötigen nur Node.js:
 
 ```powershell
 node --test tests\ifc.test.mjs tests\hero.test.mjs tests\public-sources.test.mjs
+node --test tests\pages-demo.test.mjs
 powershell -NoProfile -File tests\search.test.ps1
 ```
 

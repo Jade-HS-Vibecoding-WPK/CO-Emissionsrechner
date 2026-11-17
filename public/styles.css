@@ -74,6 +74,21 @@ a { color: inherit; }
 
 .header-link:hover, .source-note a:hover { color: var(--blue-dark); }
 
+.demo-notice {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 2px solid #8a431d;
+  background: #fff3df;
+  color: #52270f;
+  font-size: 13px;
+}
+
+.demo-notice[hidden] { display: none; }
+
+.demo-notice strong { flex: 0 0 auto; }
+
 main {
   width: min(100% - 40px, 960px);
   margin: 0 auto;

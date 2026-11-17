@@ -60,6 +60,12 @@ body::before {
   background: rgba(255, 255, 255, .92);
 }
 
+.demo-notice {
+  border-color: #000;
+  background: #B7D7B0;
+  color: #000;
+}
+
 .brand {
   gap: 12px;
   color: #000;

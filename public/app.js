@@ -5,7 +5,8 @@ import {
   flattenSearchResults,
   isDatasetValid,
   parseIfcText,
-} from "/ifc.mjs";
+} from "./ifc.mjs";
+import { getDemoDetail, searchDemoData } from "./demo-data.mjs";
 
 const form = document.querySelector("#search-form");
 const input = document.querySelector("#material-query");
@@ -23,6 +24,7 @@ const modelResults = document.querySelector("#ifc-results");
 const modelResultsSummary = document.querySelector("#ifc-results-summary");
 const modelResultsBody = document.querySelector("#ifc-results-body");
 const modelTotal = document.querySelector("#ifc-total");
+const pagesDemo = Boolean(window.__PAGES_DEMO__);
 let selectedItem = null;
 let selectedButton = null;
 let ifcState = null;
@@ -36,6 +38,32 @@ function escapeHtml(value) {
     '"': "&quot;",
     "'": "&#39;",
   })[character]);
+}
+
+if (pagesDemo) {
+  document.querySelector("#demo-notice").hidden = false;
+  document.querySelector(".header-link").textContent = "ÖKOBAUDAT-Info (nicht live verbunden) ↗";
+  document.querySelector(".intro-copy").textContent =
+    "Diese statische Demo zeigt die Bedienung mit ausdrücklich synthetischen Beispieldaten. Es findet keine Live-Suche statt; Beispielwerte sind keine geprüfte Ökobilanz.";
+  document.querySelector(".form-note").textContent =
+    "DEMO-SUCHE: Durchsucht lokale Beispieldaten. Die Live-ÖKOBAUDAT-Suche und Backend-Funktionen sind in GitHub Pages nicht verfügbar.";
+  document.querySelector("#search-title").textContent = "Beispielmaterial auswählen";
+  document.querySelector(".results-heading .step-label").textContent = "DEMO-BEISPIELE";
+  document.querySelector("#model-title").textContent = "IFC-Modell lokal ausprobieren";
+  document.querySelector(".model-copy > p:not(.step-label)").textContent =
+    "IFC-Dateien werden lokal im Browser gelesen und nicht hochgeladen. Die optionale Rechenvorschau nutzt ausschließlich synthetische Demo-GWP-Werte und ist keine reale oder geprüfte Ökobilanz.";
+  document.querySelector("#source-title").nextElementSibling.querySelector("p").innerHTML =
+    "<strong>GitHub-Pages-Demo:</strong> Suchtreffer und GWP-Werte sind synthetische Beispieldaten ohne Quellenbeleg. Es gibt keine Live-ÖKOBAUDAT-Suche, kein Backend und keine geprüfte Ökobilanz. Die unten verlinkten Stellen sind nur externe Informationsseiten und keine Belege für die Demo-Werte.";
+  document.querySelector("#ifc-results thead th:nth-child(2)").textContent = "Beispielmaterial / Demo-Datensatz";
+  document.querySelector("#legend-title").textContent = "Beispielwerte ohne Bewertung";
+  document.querySelector(".legend-heading > div > p").textContent =
+    "Die statischen GWP-Beispielwerte sind frei erfunden und nicht aus einer Datenbank übernommen. Vergleichsgruppen oder Qualitätslabels der Demo sind keine Öko-Bewertung.";
+  document.querySelector(".group-legend").hidden = true;
+  document.querySelector(".group-note").hidden = true;
+  setMessage(
+    "Statische GitHub-Pages-Demo",
+    "Die Suche verwendet ausschließlich synthetische Beispieldaten. Live-ÖKOBAUDAT-Suche und Backend-Funktionen sind nicht verfügbar; GWP-Werte sind keine realen oder geprüften Ökobilanzdaten.",
+  );
 }
 
 function formatNumber(value) {
@@ -196,7 +224,7 @@ function renderResults(data) {
                 <span class="result-name">${escapeHtml(item.Name)}</span>
                 <span class="result-bottom">
                   <span class="result-year">${escapeHtml(item.ReferenceYear || "Jahr unbekannt")} · ${item.ReferenceAmount && item.Unit ? `pro ${escapeHtml(item.ReferenceAmount)} ${escapeHtml(readableText(item.Unit))}` : "Bezugsgröße fehlt"}</span>
-                  <span class="result-value">${item.Gwp === null ? "Kein GWP-Wert" : `${formatNumber(item.Gwp)} kg CO₂-eq`}</span>
+                  <span class="result-value">${item.Gwp === null ? "Kein GWP-Wert" : `${pagesDemo ? "DEMO · " : ""}${formatNumber(item.Gwp)} kg CO₂-eq`}</span>
                 </span>
                 <span class="result-ranking">
                   ${hasUsableRank(item)
@@ -220,6 +248,14 @@ function renderResults(data) {
       selectResult(peer.Items[Number(button.dataset.itemIndex)], button);
     });
   });
+
+  if (pagesDemo) {
+    setMessage(
+      "Demo-Ergebnisse",
+      "Alle Treffer und GWP-Zahlen sind synthetische Beispieldaten ohne Quellenbeleg. Keine Live-ÖKOBAUDAT-Suche; keine geprüfte Ökobilanz.",
+    );
+    return;
+  }
 
   const provenance = data.provenance || {};
   const cacheStatus = ({
@@ -264,7 +300,9 @@ async function selectResult(item, button) {
 
   try {
     const params = new URLSearchParams({ id: item.Id, version: item.Version, useCase: useCase.value });
-    const data = await requestJson(`/api/detail?${params}`);
+    const data = pagesDemo
+      ? getDemoDetail(item.Id, useCase.value)
+      : await requestJson(`/api/detail?${params}`);
     renderDetail(data);
   } catch (error) {
     detailPanel.innerHTML = `<div class="empty-detail"><strong>Details konnten nicht geladen werden</strong><p>${escapeHtml(error.message)}</p></div>`;
@@ -313,7 +351,7 @@ function renderDetail(data) {
           <span class="metric-value">${formatNumber(metric.Value)} <span class="metric-unit">${escapeHtml(readableText(metric.Unit))} · ${metricBasis}</span></span>
         </div>
       `).join("")}</div>`
-    : `<h3 class="metric-heading">Weitere Umweltindikatoren</h3><p class="no-alternatives">Für diesen Datensatz sind in der ausgewerteten Lebenszyklusphase keine weiteren Werte vorhanden.</p>`;
+    : `<h3 class="metric-heading">Weitere Umweltindikatoren</h3><p class="no-alternatives">${pagesDemo ? "Keine weiteren synthetischen Demo-Beispiele vorhanden." : "Für diesen Datensatz sind in der ausgewerteten Lebenszyklusphase keine weiteren Werte vorhanden."}</p>`;
   const alternatives = data.alternatives?.length
     ? data.alternatives.map((alternative) => {
       const lowerMetrics = (alternative.Metrics || []).filter((metric) => metric.Relation === "lower");
@@ -347,10 +385,14 @@ function renderDetail(data) {
         </div>
       `;
     }).join("")
-    : `<p class="no-alternatives">${data.comparison.comparable
+    : `<p class="no-alternatives">    ${pagesDemo
+      ? "Die GWP-Zahl ist ein synthetischer Demo-Wert ohne Quellenbeleg."
+      : data.comparison.comparable
       ? "In derselben Kategorie, Einheit und Bezugsmenge wurden keine Datensätze mit niedrigerem GWP-Wert gefunden."
       : escapeHtml(data.comparison.reason || "Ein vergleichbarer Datensatz ist nicht verfügbar.")} Das ist keine Aussage zur technischen Austauschbarkeit.</p>`;
-  const validityLabel = item.Validity === "valid"
+  const validityLabel = pagesDemo
+    ? "Demo – Gültigkeit nicht geprüft"
+    : item.Validity === "valid"
     ? "laut Datensatz aktuell"
     : item.Validity === "expired"
       ? "Gültigkeit abgelaufen"
@@ -358,7 +400,9 @@ function renderDetail(data) {
   const useNote = data.materialAlternative.Application
     ? `Dein gewählter Einsatz: ${escapeHtml(data.materialAlternative.Application)}. Er dient als Kontext für den Materialalternativen-Check, filtert aber nicht die ÖKOBAUDAT-Treffer.`
     : "Ohne gewählten Einsatz lässt sich kein bauteilbezogener Materialersatz prüfen.";
-  const ratingNote = data.rating.Group === "nicht vergleichbar"
+  const ratingNote = pagesDemo
+    ? "Keine fachliche Einordnung: synthetische Demo-Werte ohne Quellenbeleg."
+    : data.rating.Group === "nicht vergleichbar"
     ? "Keine belastbare relative Einordnung: Es fehlen mindestens drei gültige, methodisch passende Datensätze."
     : data.rating.Group === "nicht unterscheidbar"
       ? "Die GWP-Werte dieser Vergleichsgruppe sind identisch; eine relative Abstufung ist nicht möglich."
@@ -376,10 +420,10 @@ function renderDetail(data) {
       <p class="detail-category">${escapeHtml(item.Category || "Kategorie nicht angegeben")}</p>
       <div class="gwp-card">
         <div class="gwp-main">
-          <span class="gwp-label">Treibhauspotenzial · GWP total</span>
+          <span class="gwp-label">${pagesDemo ? "Synthetischer DEMO-Wert · nicht geprüft" : "Treibhauspotenzial · GWP total"}</span>
           <strong class="gwp-value">${formatNumber(item.Gwp)}</strong>
           <span class="gwp-unit">kg CO₂-Äquivalent ${reference}</span>
-          <div class="gwp-caption">Produktionsphase A1–A3 · DIN EN 15804+A2</div>
+          <div class="gwp-caption">${pagesDemo ? "Kein Quellenbeleg · keine geprüfte Ökobilanz" : "Produktionsphase A1–A3 · DIN EN 15804+A2"}</div>
         </div>
         <aside class="gwp-ranking" aria-label="Relative Rangordnung">
           <span class="gwp-ranking-label">${hasRank ? "Rang in Vergleichsgruppe" : "Einordnung"}</span>
@@ -400,11 +444,13 @@ function renderDetail(data) {
         <div><dt>Gültigkeit</dt><dd>${escapeHtml(item.ValidUntil || "Nicht angegeben")} · ${escapeHtml(validityLabel)}</dd></div>
         <div><dt>Lokal abgerufen</dt><dd>${escapeHtml(data.retrievedAt || "Nicht angegeben")}</dd></div>
       </dl>
-      <a class="dataset-link" href="${escapeHtml(item.Url)}" target="_blank" rel="noreferrer">Originaldatensatz bei ÖKOBAUDAT ansehen ↗</a>
+      ${pagesDemo ? "" : `<a class="dataset-link" href="${escapeHtml(item.Url)}" target="_blank" rel="noreferrer">Originaldatensatz bei ÖKOBAUDAT ansehen ↗</a>`}
       <p class="compare-note">${interpretationNote}</p>
       <div class="alternatives">
-        <h3>GWP-Datensatzvergleich</h3>
-        <p class="alternatives-intro">${data.comparison.count} gültige Datensätze derselben Kategorie in „${escapeHtml(data.comparison.category)}“, Modul A1–A3, je ${escapeHtml(data.comparison.referenceAmount || "unbekannte Bezugsmenge")} ${escapeHtml(readableText(data.comparison.unit || ""))}. Höchstens eine Variante mit niedrigerem GWP wird gezeigt. Das ist kein Materialersatz.</p>
+        <h3>${pagesDemo ? "Demo-Werte · keine ökologische Bewertung" : "GWP-Datensatzvergleich"}</h3>
+        <p class="alternatives-intro">${pagesDemo
+          ? "Synthetische Beispielwerte ohne Quelle oder geprüften Vergleich."
+          : `${data.comparison.count} gültige Datensätze derselben Kategorie in „${escapeHtml(data.comparison.category)}“, Modul A1–A3, je ${escapeHtml(data.comparison.referenceAmount || "unbekannte Bezugsmenge")} ${escapeHtml(readableText(data.comparison.unit || ""))}. Höchstens eine Variante mit niedrigerem GWP wird gezeigt. Das ist kein Materialersatz.`}</p>
         ${alternatives}
       </div>
       ${renderMaterialAlternative(data.materialAlternative)}
@@ -435,7 +481,9 @@ form.addEventListener("submit", async (event) => {
   setMessage("ÖKOBAUDAT wird durchsucht", "Die offizielle Downloadseite wird auf den aktuellen Datenstand geprüft; die verlinkte CSV-Datei wird bei Bedarf lokal zwischengespeichert.", "loading");
 
   try {
-    const data = await requestJson(`/api/search?q=${encodeURIComponent(query)}`);
+    const data = pagesDemo
+      ? searchDemoData(query)
+      : await requestJson(`/api/search?q=${encodeURIComponent(query)}`);
     renderResults(data);
   } catch (error) {
     setMessage("Die Suche konnte nicht abgeschlossen werden", error.message, "error");
@@ -451,6 +499,7 @@ function getSelectedDataset(row, searchResult) {
 }
 
 function getDatasetSourceLink(dataset) {
+  if (pagesDemo) return "DEMO-Beispielwert – keine Quelle";
   try {
     const url = new URL(dataset?.Url);
     if (url.protocol === "https:" &&
@@ -464,6 +513,7 @@ function getDatasetSourceLink(dataset) {
 }
 
 function getDatasetValidityText(dataset) {
+  if (pagesDemo) return "Demo-Beispielwert; Gültigkeit nicht geprüft";
   if (isDatasetValid(dataset)) return `gültig bis ${dataset.ValidUntil || "nicht angegeben"}`;
   if (dataset?.Validity === "expired") return `abgelaufen seit ${dataset.ValidUntil || "unbekannt"}`;
   return "Gültigkeit unbekannt";
@@ -512,13 +562,13 @@ function renderIfcResults() {
     } else if (element.materialStatus === "missing") {
       status = "Keine explizite IFC-Materialzuordnung vorhanden.";
     } else if (!searchResult || searchResult.loading) {
-      status = "ÖKOBAUDAT-Datensätze werden gesucht …";
+      status = pagesDemo ? "Demo-Beispieldatensätze werden gesucht …" : "ÖKOBAUDAT-Datensätze werden gesucht …";
     } else if (searchResult.error) {
       status = `Datensatzsuche fehlgeschlagen: ${searchResult.error}`;
     } else if (!candidates.length) {
-      status = "Keine ÖKOBAUDAT-Treffer für dieses IFC-Material.";
+      status = pagesDemo ? "Keine passenden Demo-Beispiele für dieses IFC-Material." : "Keine ÖKOBAUDAT-Treffer für dieses IFC-Material.";
     } else if (!dataset) {
-      status = "ÖKOBAUDAT-Datensatz auswählen.";
+      status = pagesDemo ? "Demo-Datensatz auswählen." : "ÖKOBAUDAT-Datensatz auswählen.";
     } else if (!isDatasetValid(dataset)) {
       status = dataset.Validity === "expired"
         ? `Datensatz abgelaufen (${dataset.ValidUntil || "Ablaufjahr unbekannt"}); er wird nicht eingerechnet.`
@@ -540,7 +590,9 @@ function renderIfcResults() {
       } else {
         try {
           calculation = calculateContribution(quantity, dataset);
-          status = "Berechnet aus IFC-Menge und gewähltem ÖKOBAUDAT-Datensatz.";
+          status = pagesDemo
+            ? "Demo-Rechenbeispiel aus IFC-Menge und synthetischem GWP-Wert; keine geprüfte Bilanz."
+            : "Berechnet aus IFC-Menge und gewähltem ÖKOBAUDAT-Datensatz.";
           statusClass = "is-calculated";
         } catch (error) {
           status = error.message;
@@ -558,7 +610,9 @@ function renderIfcResults() {
       const gwp = candidate.Gwp === null || candidate.Gwp === undefined || candidate.Gwp === ""
         ? "kein GWP-Wert"
         : `${formatNumber(candidate.Gwp)} kg CO₂-eq`;
-      const validity = candidate.Validity === "valid"
+      const validity = pagesDemo
+        ? "Demo – nicht geprüft"
+        : candidate.Validity === "valid"
         ? "gültig"
         : candidate.Validity === "expired"
           ? "abgelaufen"
@@ -605,8 +659,8 @@ function renderIfcResults() {
   const quality = assessProjectDataQuality(assessmentEntries, ifcState.containmentAvailable);
   if (!completed.length) {
     modelTotal.innerHTML = `<div class="ifc-total-main">
-        <div><p class="ifc-total-eyebrow">ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz</p><p class="ifc-total-empty">Noch keine Beiträge berechenbar</p></div>
-        <div class="ifc-quality" data-level="${quality.level}"><strong>${escapeHtml(quality.label)}</strong><p>${escapeHtml(quality.explanation)}</p></div>
+        <div><p class="ifc-total-eyebrow">${pagesDemo ? "Demo-Rechenvorschau · keine Bilanz" : "ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz"}</p><p class="ifc-total-empty">Noch keine Beiträge berechenbar</p></div>
+        <div class="ifc-quality" data-level="${pagesDemo ? "unknown" : quality.level}"><strong>${pagesDemo ? "Demo – nicht bewertet" : escapeHtml(quality.label)}</strong><p>${pagesDemo ? "Synthetische Werte erlauben keine Aussage zur Datenqualität." : escapeHtml(quality.explanation)}</p></div>
       </div>
       <p class="ifc-total-limit">Ohne berechenbare Beiträge wird keine Zahl ausgegeben. Es gibt keine statistische Unsicherheitsspanne; fehlende Daten werden nicht ergänzt oder geschätzt.</p>`;
   } else {
@@ -636,15 +690,19 @@ function renderIfcResults() {
         <span>${count} ${count === 1 ? "Bauteil" : "Bauteile"} · ${escapeHtml(getDatasetValidityText(dataset))}</span></li>`).join("");
     modelTotal.innerHTML = `<div class="ifc-total-main">
         <div>
-          <p class="ifc-total-eyebrow">ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz</p>
+          <p class="ifc-total-eyebrow">${pagesDemo ? "Demo-Rechenvorschau · synthetische GWP-Werte" : "ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz"}</p>
           <p class="ifc-total-number">${formatNumber(subtotal)} <span>kg CO₂-eq</span></p>
           <p class="ifc-total-caption">${escapeHtml(scopeExplanation)} ${escapeHtml(fileScopeWarning)}</p>
         </div>
-        <div class="ifc-quality" data-level="${quality.level}"><strong>${escapeHtml(quality.label)}</strong><p>${escapeHtml(quality.explanation)}</p></div>
+        <div class="ifc-quality" data-level="${pagesDemo ? "unknown" : quality.level}"><strong>${pagesDemo ? "Demo – nicht bewertet" : escapeHtml(quality.label)}</strong><p>${pagesDemo ? "Synthetische Werte erlauben keine Aussage zur Datenqualität." : escapeHtml(quality.explanation)}</p></div>
       </div>
-      <p class="ifc-total-method"><strong>Systemgrenze:</strong> Produktionsphase A1–A3 nach EN 15804+A2, nicht der gesamte Lebenszyklus. <strong>Rechenweg:</strong> Summe aus (IFC-Menge ÷ Bezugsmenge) × ÖKOBAUDAT-GWP.</p>
-      <div class="ifc-total-sources"><h3>Verwendete ÖKOBAUDAT-Datensätze</h3><ul>${datasetSources}</ul></div>
-      <p class="ifc-total-limit">Komponentenbasierte Schätzung, keine geprüfte Vollbilanz. Das Qualitätslabel beschreibt Datenlage und Zuordnung, keine statistische Genauigkeit; eine belastbare Unsicherheitsspanne liegt nicht vor.</p>`;
+      <p class="ifc-total-method">${pagesDemo
+        ? "<strong>Demo-Rechenvorschau:</strong> Die Formel illustriert nur den IFC-Import mit synthetischen Beispielwerten. Kein Quellenbeleg, keine reale oder geprüfte Ökobilanz."
+        : "<strong>Systemgrenze:</strong> Produktionsphase A1–A3 nach EN 15804+A2, nicht der gesamte Lebenszyklus. <strong>Rechenweg:</strong> Summe aus (IFC-Menge ÷ Bezugsmenge) × ÖKOBAUDAT-GWP."}</p>
+      <div class="ifc-total-sources"><h3>${pagesDemo ? "Verwendete Demo-Beispiele" : "Verwendete ÖKOBAUDAT-Datensätze"}</h3><ul>${datasetSources}</ul></div>
+      <p class="ifc-total-limit">${pagesDemo
+        ? "Dieser Rechenwert dient ausschließlich zur Bedienvorschau. Die GWP-Werte sind synthetisch und dürfen nicht als reale, geprüfte Bilanz verwendet werden."
+        : "Komponentenbasierte Schätzung, keine geprüfte Vollbilanz. Das Qualitätslabel beschreibt Datenlage und Zuordnung, keine statistische Genauigkeit; eine belastbare Unsicherheitsspanne liegt nicht vor."}</p>`;
   }
 }
 
@@ -723,7 +781,9 @@ modelFile.addEventListener("change", async () => {
       if (revision !== modelLoadRevision) return;
       const search = { items: [], loading: true, error: null };
       ifcState.materialSearch.set(material, search);
-      modelStatus.textContent = `IFC lokal gelesen. Suche ÖKOBAUDAT-Datensätze für „${material}“ …`;
+      modelStatus.textContent = pagesDemo
+        ? `IFC lokal gelesen. Suche Demo-Beispiele für „${material}“ …`
+        : `IFC lokal gelesen. Suche ÖKOBAUDAT-Datensätze für „${material}“ …`;
       renderIfcResults();
       if (material.trim().length < 2) {
         search.loading = false;
@@ -731,7 +791,9 @@ modelFile.addEventListener("change", async () => {
         continue;
       }
       try {
-        const data = await requestJson(`/api/search?q=${encodeURIComponent(material)}`);
+        const data = pagesDemo
+          ? searchDemoData(material)
+          : await requestJson(`/api/search?q=${encodeURIComponent(material)}`);
         if (revision !== modelLoadRevision) return;
         search.items = flattenSearchResults(data)
           .filter((item) => item?.Id && item?.Version)
