@@ -1,4 +1,0 @@
-Image: "Meadow lined with trees, Walsdorf"
-Author: Gerda Arendt
-Source: https://commons.wikimedia.org/wiki/File:Meadow_lined_with_trees,_Walsdorf.jpg
-License: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)

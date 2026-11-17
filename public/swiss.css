@@ -104,18 +104,27 @@ main {
 
 .intro::before {
   position: absolute;
-  z-index: -1;
-  inset: 22px 0 10px;
-  background-image:
-    linear-gradient(90deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .74) 38%, rgba(255, 255, 255, .28)),
-    url("/landscape.jpg");
-  background-position: center, center 54%;
-  background-size: cover;
+  z-index: 1;
+  inset: 0;
+  background: linear-gradient(90deg, #fff 0%, rgba(255, 255, 255, .96) 34%, rgba(255, 255, 255, .76) 54%, rgba(255, 255, 255, .12) 100%);
   content: "";
-  opacity: .84;
   pointer-events: none;
 }
 
+.intro-art {
+  position: absolute;
+  z-index: 0;
+  right: 0;
+  bottom: 0;
+  width: 78%;
+  height: 100%;
+  object-fit: contain;
+  object-position: right bottom;
+  opacity: .78;
+  pointer-events: none;
+}
+
+.intro-copy-block, .intro-copy { position: relative; z-index: 2; }
 .intro-copy-block { grid-column: 1 / span 7; }
 .intro-copy { grid-column: 1 / span 7; }
 .eyebrow, .step-label { color: #000; font-size: 10px; font-weight: 700; letter-spacing: .16em; }
@@ -403,7 +412,8 @@ footer {
   h1 br { display: none; }
   h1 span { display: block; margin-top: .13em; }
   .intro-copy { font-size: 12px; line-height: 1.65; }
-  .intro::before { inset: 18px 0 8px; background-position: center, 58% center; }
+  .intro::before { background: linear-gradient(90deg, rgba(255, 255, 255, .96) 0%, rgba(255, 255, 255, .78) 48%, rgba(255, 255, 255, .12) 100%); }
+  .intro-art { right: -12%; width: 136%; height: 94%; opacity: .72; }
   .search-panel { padding: 21px 17px 18px; }
   .section-heading h2, .results-heading h2 { font-size: 20px; }
   .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 19px; }
