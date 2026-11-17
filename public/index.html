@@ -7,7 +7,7 @@
   <title>Material-Kompass – CO₂ &amp; Ökobilanz</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/swiss.css">
-  <script src="/app.js" defer></script>
+  <script type="module" src="/app.js"></script>
 </head>
 <body>
   <header class="site-header">
@@ -58,7 +58,7 @@
           </label>
           <button class="search-button" type="submit"><span>Suchen</span><span aria-hidden="true">→</span></button>
         </div>
-        <p class="form-note">Durchsucht den ÖKOBAUDAT-CSV-Export nach Datensätzen gemäß EN 15804+A2 für die Produktionsphase A1–A3. Der Einsatz dient als Kontext für die Alternativenprüfung, schränkt die Treffer aber nicht ein.</p>
+        <p class="form-note">Durchsucht den offiziell verlinkten ÖKOBAUDAT-Datenstand nach EN 15804+A2 für A1–A3 und ergänzt bekannte deutsche/englische Material-Synonyme. Der Einsatz dient als Kontext für die Alternativenprüfung, schränkt die Treffer aber nicht ein.</p>
       </form>
     </section>
 
@@ -66,7 +66,7 @@
       <span class="message-icon" aria-hidden="true">i</span>
       <div>
         <strong>So funktioniert's</strong>
-        <p>Gib einen Materialnamen ein, zum Beispiel „Dämmstoff“ oder „Beton“. Für die erste Suche ist eine Internetverbindung zum ÖKOBAUDAT-Export nötig. Die Daten werden lokal zwischengespeichert.</p>
+        <p>Gib einen Materialnamen ein, zum Beispiel „Dämmstoff“, „concrete“ oder „Beton“. Für die erste Suche ist eine Internetverbindung zur offiziellen ÖKOBAUDAT-Downloadseite und ihrem verlinkten CSV-Export nötig. Der Datenstand wird angezeigt und lokal zwischengespeichert.</p>
       </div>
     </section>
 
@@ -94,11 +94,11 @@
       <div class="model-copy">
         <p class="step-label">OPTIONALER MODELL-CHECK</p>
         <h2 id="model-title">Schon ein IFC-Modell?</h2>
-        <p>Der Archicad-IFC-Import ist hier als Oberfläche vorbereitet. Diese Version lädt oder analysiert die Datei noch nicht – deine Auswahl bleibt auf diesem Gerät.</p>
+        <p>IFC-Dateien werden lokal im Browser gelesen und nicht hochgeladen. Die A1–A3-Schätzung nutzt nur explizite Materialzuordnungen und Mengen sowie gültige ÖKOBAUDAT-Datensätze. Bei fehlenden Treffern kannst du WECOBIS-Kontext und öffentliche IBU-EPDs manuell prüfen; daraus wird kein ungeprüfter Webwert automatisch eingerechnet.</p>
         <label class="file-picker" for="model-file">
           <span class="file-picker-icon" aria-hidden="true">＋</span>
-          <span><strong>IFC-Datei auswählen</strong><small>Archicad-Export · .ifc</small></span>
-          <input id="model-file" type="file" accept=".ifc,application/ifc">
+          <span><strong>IFC-Datei auswählen</strong><small>IFC2x3 / IFC4 · .ifc · max. 100 MB</small></span>
+          <input id="model-file" type="file" accept=".ifc,application/ifc,application/x-step">
         </label>
         <p id="model-status" class="model-status" role="status" aria-live="polite">Noch kein Modell ausgewählt. Native Archicad-PLN-Dateien werden nicht unterstützt.</p>
       </div>
@@ -106,6 +106,30 @@
         <div class="model-cube"><span></span><span></span><span></span><span></span><span></span><span></span></div>
         <span class="model-tag">IFC</span>
       </div>
+    </section>
+    <section id="ifc-results" class="ifc-results" aria-labelledby="ifc-results-title" hidden>
+      <div class="ifc-results-heading">
+        <div>
+          <p class="step-label">LOKALE IFC-AUSWERTUNG</p>
+          <h2 id="ifc-results-title">Bauteile und A1–A3-Beiträge</h2>
+        </div>
+        <p id="ifc-results-summary" role="status" aria-live="polite"></p>
+      </div>
+      <div class="ifc-table-wrap">
+        <table class="ifc-table">
+          <thead>
+            <tr>
+              <th scope="col">Bauteil</th>
+              <th scope="col">Material / ÖKOBAUDAT-Datensatz</th>
+              <th scope="col">IFC-Menge</th>
+              <th scope="col">A1–A3-Beitrag</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody id="ifc-results-body"></tbody>
+        </table>
+      </div>
+      <div id="ifc-total" class="ifc-total" aria-live="polite"></div>
     </section>
 
     <section class="comparison-legend" aria-labelledby="legend-title">
@@ -129,8 +153,11 @@
       <div class="source-note-icon" aria-hidden="true">↗</div>
       <div>
         <h2 id="source-title">Quellenstatus</h2>
-        <p><strong>ÖKOBAUDAT:</strong> angeschlossen für ökologische Datensätze (EN 15804+A2, A1–A3). Niedrigere GWP-Werte werden nur als Datensatzvergleich innerhalb einer vorläufigen Vergleichsgruppe gezeigt. Eine belastbare Materialsubstitution anhand gleichwertiger Bauteilfunktionen ist noch nicht angebunden.</p>
-        <p><strong>BMWSB, BMWE und BMUKN:</strong> noch nicht angebunden. Produktspezifische EPDs oder ergänzende Ökobilanzbelege werden ebenfalls noch nicht ausgewertet.</p>
+        <p><strong>ÖKOBAUDAT:</strong> Der aktuelle Release und CSV-Export werden von der offiziellen Downloadseite bezogen; Release, Datenstock-ID, Abrufdatum und Cache-Status bleiben nachvollziehbar. Die ÖKOBAUDAT dokumentiert zusätzlich eine standardisierte Datenaustauschschnittstelle. Deren konkreter Lesezugang ist in dieser App nicht angebunden; verwendet wird der offiziell verlinkte CSV-Download. Niedrigere GWP-Werte werden nur als Datensatzvergleich innerhalb einer vorläufigen Vergleichsgruppe gezeigt. Eine belastbare Materialsubstitution anhand gleichwertiger Bauteilfunktionen ist noch nicht angebunden.</p>
+        <p><strong>WECOBIS:</strong> öffentliche Materialinformationen dienen nur als qualitativer Kontext und Quelle für die manuelle Prüfung, nicht als GWP-Faktor. <a href="https://www.wecobis.de/index.php?id=16043" target="_blank" rel="noreferrer">WECOBIS-Baustoffsuche ↗</a></p>
+        <p><strong>IBU:</strong> öffentliche EPD-PDF/HTML-Seiten können manuell geprüft werden; sie werden derzeit nicht automatisch numerisch ausgewertet. IBU.data-XML-Downloads mit Registrierung werden nicht verwendet. <a href="https://ibu-epd.com/veroeffentlichte-epds/" target="_blank" rel="noreferrer">Veröffentlichte IBU-EPDs ↗</a></p>
+        <p><strong>Allgemeine Websuche:</strong> nicht angebunden, da kein zulässiger öffentlicher Suchendpunkt ohne Login/API-Schlüssel konfiguriert ist. Nicht belegbare Beiträge bleiben in der IFC-Auswertung als fehlend markiert und außerhalb der Teilbilanz.</p>
+        <p><strong>BMWSB, BMWE und BMUKN:</strong> noch nicht angebunden. Ergänzende Ökobilanzbelege außerhalb der beschriebenen Quellen werden ebenfalls noch nicht ausgewertet.</p>
         <p><strong>Knauf, Wienerberger, Bundesverband Ziegel und KS-ORIGINAL:</strong> Produktkataloge sind nicht angebunden und dürfen nur zur Produktidentifikation dienen – nicht als Ökobilanzbeleg.</p>
         <a href="https://www.oekobaudat.de/service/downloads.html" target="_blank" rel="noreferrer">ÖKOBAUDAT: Daten und Schnittstellen <span aria-hidden="true">↗</span></a>
         <div class="catalog-links" aria-label="Nicht angebundene Produktkataloge">

@@ -8,11 +8,35 @@ Add-Type -AssemblyName System.Web
 $script:Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:CacheDirectory = Join-Path $env:LOCALAPPDATA 'CO-Emissionsrechner'
 $script:CacheFile = Join-Path $script:CacheDirectory 'oekobaudat.csv'
-$script:DataUrl = 'https://www.oekobaudat.de/OEKOBAU.DAT/resource/datastocks/cc64f7e1-14d8-4a57-b11b-2cf03d200c82/exportCSV'
+$script:CacheMetadataFile = Join-Path $script:CacheDirectory 'oekobaudat.metadata.json'
+$script:ReleasePageUrl = 'https://www.oekobaudat.de/service/downloads.html'
 $script:DataSource = 'OEKOBAUDAT-CSV-Export, EN 15804+A2, Modul A1-A3'
 $script:Dataset = $null
 $script:RetrievedAt = $null
 $script:DataWarning = $null
+$script:SourceMetadata = $null
+$script:CacheStatus = 'not-loaded'
+$script:CatalogManifest = $null
+$script:CatalogIndex = $null
+$script:CatalogStatus = 'not-loaded'
+$script:CatalogLicenseStatus = 'reuse-terms-not-independently-verified'
+$script:CatalogUsageNotice = 'ÖKOBAUDAT ist öffentlich zugänglich; eine pauschale Lizenz zur Weitergabe wurde nicht verifiziert. Der Katalog wird nicht in das Repository oder Frontend kopiert.'
+$script:MaterialAliasGroups = @(
+    @('Kalksandstein', 'Kalksandstein-Mauerwerk', 'Kalksandsteinmauerwerk', 'calcium silicate brick', 'sand-lime brick'),
+    @('Holzfaserdämmstoff', 'Holzfaser', 'wood fibre insulation', 'wood fiber insulation'),
+    @('Mineralwolle', 'Steinwolle', 'Glaswolle', 'mineral wool', 'rock wool', 'glass wool'),
+    @('Zellulosefaser', 'Zellulosedämmung', 'cellulose insulation'),
+    @('expandiertes Polystyrol', 'expanded polystyrene', 'EPS'),
+    @('extrudiertes Polystyrol', 'extruded polystyrene', 'XPS'),
+    @('Ziegel', 'Mauerziegel', 'Backstein', 'brick', 'clay brick'),
+    @('Gipskarton', 'Gipsplatte', 'gypsum board', 'drywall'),
+    @('Beton', 'concrete'),
+    @('Mörtel', 'mortar'),
+    @('Stahl', 'steel'),
+    @('Aluminium', 'aluminum', 'aluminium'),
+    @('Glas', 'glass'),
+    @('Holz', 'timber', 'wood')
+)
 
 function Send-Response {
     param(
@@ -60,6 +84,383 @@ function Get-Field {
     }
 
     return ([string]$Fields[$index]).Trim().Trim("'")
+}
+
+function Normalize-MaterialSearchText {
+    param([string]$Value)
+
+    $normalized = $Value.ToLowerInvariant().Replace('ß', 'ss').Normalize([System.Text.NormalizationForm]::FormD)
+    $builder = [System.Text.StringBuilder]::new()
+    foreach ($character in $normalized.ToCharArray()) {
+        if ([System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($character) -eq [System.Globalization.UnicodeCategory]::NonSpacingMark) {
+            continue
+        }
+        [void]$builder.Append($character)
+    }
+
+    return ([regex]::Replace($builder.ToString(), '[^a-z0-9]+', ' ')).Trim()
+}
+
+function Test-ContainsMaterialTerm {
+    param(
+        [string]$Query,
+        [string]$Term
+    )
+
+    $queryKey = Normalize-MaterialSearchText -Value $Query
+    $termKey = Normalize-MaterialSearchText -Value $Term
+    if ([string]::IsNullOrWhiteSpace($queryKey) -or [string]::IsNullOrWhiteSpace($termKey)) {
+        return $false
+    }
+
+    return " $queryKey ".Contains(" $termKey ")
+}
+
+function Get-MaterialQueryTerms {
+    param([string]$Query)
+
+    $terms = [System.Collections.Generic.List[string]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $original = $Query.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($original)) {
+        $terms.Add($original)
+        [void]$seen.Add((Normalize-MaterialSearchText -Value $original))
+    }
+
+    foreach ($group in $script:MaterialAliasGroups) {
+        $groupMatches = $false
+        foreach ($alias in $group) {
+            if (Test-ContainsMaterialTerm -Query $original -Term $alias) {
+                $groupMatches = $true
+                break
+            }
+        }
+        if (-not $groupMatches) {
+            continue
+        }
+
+        foreach ($alias in $group) {
+            $key = Normalize-MaterialSearchText -Value $alias
+            if ($seen.Add($key)) {
+                $terms.Add($alias)
+            }
+            if ($terms.Count -ge 12) {
+                return $terms.ToArray()
+            }
+        }
+    }
+
+    return $terms.ToArray()
+}
+
+function Get-SearchTermPriority {
+    param(
+        [string]$Name,
+        [string[]]$QueryTerms
+    )
+
+    for ($index = 0; $index -lt $QueryTerms.Length; $index++) {
+        $term = $QueryTerms[$index]
+        if ($Name.Equals($term, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return ($index * 4)
+        }
+        if ($Name.StartsWith("$term ", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return ($index * 4) + 1
+        }
+        if ($Name.IndexOf($term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            return ($index * 4) + 2
+        }
+    }
+
+    return [int]::MaxValue
+}
+
+function Get-RecordMatchedTerms {
+    param(
+        [object]$Record,
+        [string[]]$QueryTerms
+    )
+
+    return @($QueryTerms | Where-Object {
+        $Record.Name.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $Record.Category.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    })
+}
+
+function Build-MaterialCatalogIndex {
+    param([object[]]$Records)
+
+    $entries = [System.Collections.Generic.List[object]]::new()
+    foreach ($record in $Records) {
+        $entries.Add([pscustomobject]@{
+            Record = $record
+            Name = [string]$record.Name
+            Category = [string]$record.Category
+        })
+    }
+
+    return ,$entries.ToArray()
+}
+
+function Get-IndexedRecordMatchedTerms {
+    param(
+        [object]$Entry,
+        [string[]]$QueryTerms
+    )
+
+    return @($QueryTerms | Where-Object {
+        $Entry.Name.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $Entry.Category.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    })
+}
+
+function Find-MaterialRecords {
+    param(
+        [object[]]$Records,
+        [string]$Query,
+        [object[]]$Index
+    )
+
+    $queryTerms = @(Get-MaterialQueryTerms -Query $Query)
+    $matchedTermSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $matches = [System.Collections.Generic.List[object]]::new()
+    if ($null -ne $Index) {
+        foreach ($entry in $Index) {
+            $recordTerms = @(Get-IndexedRecordMatchedTerms -Entry $entry -QueryTerms $queryTerms)
+            if ($recordTerms.Count -eq 0) {
+                continue
+            }
+
+            $matches.Add($entry.Record)
+            foreach ($term in $recordTerms) {
+                [void]$matchedTermSet.Add($term)
+            }
+        }
+    }
+    else {
+        foreach ($record in $Records) {
+            $recordTerms = @(Get-RecordMatchedTerms -Record $record -QueryTerms $queryTerms)
+            if ($recordTerms.Count -eq 0) {
+                continue
+            }
+
+            $matches.Add($record)
+            foreach ($term in $recordTerms) {
+                [void]$matchedTermSet.Add($term)
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        QueryTerms = $queryTerms
+        MatchedTerms = @($queryTerms | Where-Object { $matchedTermSet.Contains($_) })
+        Records = $matches.ToArray()
+    }
+}
+
+function Get-OfficialExportInfo {
+    param([Parameter(Mandatory)][string]$Html)
+
+    $pattern = '(?is)<a\b[^>]*href="(?<url>https://www\.oekobaudat\.de/OEKOBAU\.DAT/resource/datastocks/(?<id>[a-f0-9-]+)/exportCSV(?:\?[^"]*)?)"[^>]*>(?<text>.*?)</a>'
+    $candidates = [System.Collections.Generic.List[object]]::new()
+    foreach ($match in [regex]::Matches($Html, $pattern)) {
+        $url = [System.Net.WebUtility]::HtmlDecode($match.Groups['url'].Value)
+        if ($url -match '(?i)decimalSeparator=comma') {
+            continue
+        }
+
+        $text = [System.Net.WebUtility]::HtmlDecode(($match.Groups['text'].Value -replace '<[^>]+>', ' ')).Trim()
+        $release = [regex]::Match($text, '(?i)ÖKOBAUDAT\s+(?<release>20\d{2}-[IVX]+)')
+        if (-not $release.Success) {
+            continue
+        }
+
+        $candidates.Add([pscustomobject]@{
+            Url = $url
+            DataStockId = $match.Groups['id'].Value
+            Release = $release.Groups['release'].Value
+            IsPreferred = ($text -match 'Punkt als Dezimaltrenner')
+        })
+    }
+
+    $selected = $candidates | Where-Object { $_.IsPreferred } | Select-Object -First 1
+    if ($null -eq $selected) {
+        $selected = $candidates | Select-Object -First 1
+    }
+    if ($null -eq $selected) {
+        throw 'Auf der offiziellen ÖKOBAUDAT-Downloadseite wurde kein eindeutig benannter CSV-Export mit Datenstand gefunden.'
+    }
+
+    return [pscustomobject]@{
+        SourceName = 'ÖKOBAUDAT'
+        Release = $selected.Release
+        DataStockId = $selected.DataStockId
+        DownloadUrl = $selected.Url
+        ReleasePageUrl = $script:ReleasePageUrl
+        Format = 'CSV, Dezimalpunkt'
+        Modules = 'A1-A3'
+        Standard = 'EN 15804+A2'
+    }
+}
+
+function Test-OekoCsvFile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $encoding = [System.Text.Encoding]::GetEncoding(28591)
+    $parser = [Microsoft.VisualBasic.FileIO.TextFieldParser]::new($Path, $encoding)
+    $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
+    $parser.SetDelimiters(';')
+    $parser.HasFieldsEnclosedInQuotes = $true
+    $parser.TrimWhiteSpace = $false
+
+    try {
+        $headers = $parser.ReadFields()
+        $columns = @{}
+        for ($index = 0; $index -lt $headers.Length; $index++) {
+            $columns[$headers[$index]] = $index
+        }
+        foreach ($required in @('UUID', 'Version', 'Name (de)', 'GWPtotal (A2)', 'Konformitaet', 'Modul')) {
+            if (-not $columns.ContainsKey($required)) {
+                throw "Der ÖKOBAUDAT-CSV-Export enthält nicht die erwartete Spalte '$required'."
+            }
+        }
+
+        while (-not $parser.EndOfData) {
+            $fields = $parser.ReadFields()
+            if ($null -eq $fields) {
+                continue
+            }
+            if ((Get-Field -Fields $fields -Columns $columns -Name 'Konformitaet') -match 'EN 15804\+A2' -and
+                (Get-Field -Fields $fields -Columns $columns -Name 'Modul') -eq 'A1-A3' -and
+                -not [string]::IsNullOrWhiteSpace((Get-Field -Fields $fields -Columns $columns -Name 'Name (de)'))) {
+                return $true
+            }
+        }
+    }
+    finally {
+        $parser.Close()
+    }
+
+    throw 'Der ÖKOBAUDAT-CSV-Export enthält keine Datensätze für EN 15804+A2, Modul A1-A3.'
+}
+
+function Read-OekoCacheMetadata {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+
+    try {
+        return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json)
+    }
+    catch {
+        return [pscustomobject]@{
+            MetadataError = $_.Exception.Message
+        }
+    }
+}
+
+function Write-OekoCacheMetadata {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][object]$Metadata
+    )
+
+    $temporaryPath = "$Path.download"
+    $json = ConvertTo-Json -InputObject $Metadata -Depth 5
+    try {
+        [System.IO.File]::WriteAllText($temporaryPath, $json, [System.Text.UTF8Encoding]::new($false))
+        Move-FileAtomically -Source $temporaryPath -Destination $Path
+    }
+    catch {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -ErrorAction SilentlyContinue
+        }
+        throw
+    }
+}
+
+function Move-FileAtomically {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination
+    )
+
+    if (Test-Path -LiteralPath $Destination) {
+        $backupPath = "$Destination.$([guid]::NewGuid().ToString('N')).bak"
+        [System.IO.File]::Replace($Source, $Destination, $backupPath)
+        if (Test-Path -LiteralPath $backupPath) {
+            Remove-Item -LiteralPath $backupPath -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $backupPath) {
+                Write-Warning "Temporäre Sicherung konnte nicht entfernt werden: $backupPath"
+            }
+        }
+        return
+    }
+
+    [System.IO.File]::Move($Source, $Destination)
+}
+
+function Write-CatalogManifest {
+    param([Parameter(Mandatory)][int]$RecordCount)
+
+    $catalogDirectory = Join-Path $script:CacheDirectory 'catalog'
+    if (-not (Test-Path -LiteralPath $catalogDirectory)) {
+        New-Item -ItemType Directory -Path $catalogDirectory -Force | Out-Null
+    }
+
+    $sourceFile = Get-Item -LiteralPath $script:CacheFile
+    $sourceHash = (Get-FileHash -LiteralPath $script:CacheFile -Algorithm SHA256).Hash
+    $manifest = [pscustomobject]@{
+        SchemaVersion = 1
+        CatalogMode = 'source-csv-with-in-memory-index'
+        RecordsPersisted = $false
+        SourceName = 'ÖKOBAUDAT'
+        LicenseStatus = $script:CatalogLicenseStatus
+        UsageNotice = $script:CatalogUsageNotice
+        Release = if ($script:SourceMetadata) { $script:SourceMetadata.Release } else { $null }
+        DataStockId = if ($script:SourceMetadata) { $script:SourceMetadata.DataStockId } else { $null }
+        ReleasePageUrl = $script:ReleasePageUrl
+        DownloadUrl = if ($script:SourceMetadata) { $script:SourceMetadata.DownloadUrl } else { $null }
+        DownloadedAtUtc = if ($script:SourceMetadata) { $script:SourceMetadata.DownloadedAtUtc } else { $null }
+        SourceFileName = $sourceFile.Name
+        SourceFileBytes = $sourceFile.Length
+        SourceFileSha256 = $sourceHash
+        RecordCount = $RecordCount
+        CacheStatus = $script:CacheStatus
+        Warning = $script:DataWarning
+        BuiltAtUtc = [DateTime]::UtcNow.ToString('o')
+    }
+
+    $manifestPath = Join-Path $catalogDirectory 'manifest.json'
+    Write-OekoCacheMetadata -Path $manifestPath -Metadata $manifest
+    $script:CatalogManifest = $manifest
+    $script:CatalogStatus = 'ready'
+}
+
+function Get-SourceProvenance {
+    $metadata = $script:SourceMetadata
+    $catalogManifest = $script:CatalogManifest
+    return [pscustomobject]@{
+        sourceName = 'ÖKOBAUDAT'
+        release = if ($metadata) { $metadata.Release } else { $null }
+        dataStockId = if ($metadata) { $metadata.DataStockId } else { $null }
+        releasePageUrl = $script:ReleasePageUrl
+        downloadUrl = if ($metadata) { $metadata.DownloadUrl } else { $null }
+        downloadedAtUtc = if ($metadata) { $metadata.DownloadedAtUtc } else { $null }
+        retrievedAt = $script:RetrievedAt
+        cacheStatus = $script:CacheStatus
+        warning = $script:DataWarning
+        standard = 'EN 15804+A2'
+        modules = 'A1-A3'
+        catalogStatus = $script:CatalogStatus
+        catalogMode = 'source-csv-with-in-memory-index'
+        catalogRecordCount = if ($null -ne $script:Dataset) { $script:Dataset.Length } elseif ($catalogManifest) { $catalogManifest.RecordCount } else { $null }
+        catalogManifest = 'local-app-data/catalog/manifest.json'
+        licenseStatus = $script:CatalogLicenseStatus
+        usageNotice = $script:CatalogUsageNotice
+    }
 }
 
 function Convert-ToNumber {
@@ -243,7 +644,7 @@ function Get-CategoryGroupName {
 }
 
 function Ensure-Dataset {
-    if ($null -ne $script:Dataset) {
+    if ($null -ne $script:Dataset -and $null -ne $script:CatalogIndex) {
         return
     }
 
@@ -252,32 +653,100 @@ function Ensure-Dataset {
     }
 
     $cacheExists = Test-Path -LiteralPath $script:CacheFile
+    $cacheMetadata = Read-OekoCacheMetadata -Path $script:CacheMetadataFile
+    $officialExport = $null
+    $releasePageError = $null
+    try {
+        $releasePage = Invoke-WebRequest -Uri $script:ReleasePageUrl -UseBasicParsing
+        $officialExport = Get-OfficialExportInfo -Html $releasePage.Content
+    }
+    catch {
+        $releasePageError = $_.Exception.Message
+    }
+
     $cacheIsFresh = $false
     if ($cacheExists) {
         $cacheIsFresh = (Get-Item -LiteralPath $script:CacheFile).LastWriteTimeUtc -gt [DateTime]::UtcNow.AddDays(-1)
     }
+    $cacheMatchesRelease = $officialExport -and
+        $cacheMetadata -and
+        -not $cacheMetadata.MetadataError -and
+        $cacheMetadata.DataStockId -eq $officialExport.DataStockId -and
+        $cacheMetadata.DownloadUrl -eq $officialExport.DownloadUrl -and
+        $cacheMetadata.Release -eq $officialExport.Release
+    $needsRefresh = -not $cacheExists -or -not $cacheIsFresh -or -not $cacheMatchesRelease
 
-    if (-not $cacheIsFresh) {
+    if ($officialExport -and $needsRefresh) {
+        $downloadFile = "$($script:CacheFile).download"
         try {
-            Write-Host 'Lade den aktuellen OEKOBAUDAT-Export herunter ...'
-            $downloadFile = "$($script:CacheFile).download"
-            Invoke-WebRequest -Uri $script:DataUrl -OutFile $downloadFile -UseBasicParsing
-            Move-Item -LiteralPath $downloadFile -Destination $script:CacheFile -Force
+            Write-Host ("Lade ÖKOBAUDAT {0} über den offiziell verlinkten CSV-Export ..." -f $officialExport.Release)
+            Invoke-WebRequest -Uri $officialExport.DownloadUrl -OutFile $downloadFile -UseBasicParsing
+            [void](Test-OekoCsvFile -Path $downloadFile)
+            Move-FileAtomically -Source $downloadFile -Destination $script:CacheFile
+
+            $cacheMetadata = [pscustomobject]@{
+                SourceName = $officialExport.SourceName
+                Release = $officialExport.Release
+                DataStockId = $officialExport.DataStockId
+                DownloadUrl = $officialExport.DownloadUrl
+                ReleasePageUrl = $officialExport.ReleasePageUrl
+                Format = $officialExport.Format
+                Standard = $officialExport.Standard
+                Modules = $officialExport.Modules
+                DownloadedAtUtc = [DateTime]::UtcNow.ToString('o')
+            }
+            try {
+                Write-OekoCacheMetadata -Path $script:CacheMetadataFile -Metadata $cacheMetadata
+            }
+            catch {
+                $script:DataWarning = "Der aktuelle ÖKOBAUDAT-Export wurde geladen, aber seine Cache-Metadaten konnten nicht gespeichert werden: $($_.Exception.Message)"
+            }
+            $script:SourceMetadata = $cacheMetadata
+            $script:CacheStatus = 'updated'
         }
         catch {
             if ($downloadFile -and (Test-Path -LiteralPath $downloadFile)) {
                 Remove-Item -LiteralPath $downloadFile
             }
-            if (-not (Test-Path -LiteralPath $script:CacheFile)) {
-                throw "Der OEKOBAUDAT-Export konnte nicht geladen werden: $($_.Exception.Message)"
+            if (-not $cacheExists) {
+                throw "Der offiziell verlinkte ÖKOBAUDAT-Export ($($officialExport.Release)) konnte nicht geladen oder validiert werden: $($_.Exception.Message)"
             }
 
-            $script:DataWarning = 'Die Aktualisierung ist fehlgeschlagen. Es werden zwischengespeicherte Daten verwendet.'
+            $script:DataWarning = "Die Aktualisierung von ÖKOBAUDAT $($officialExport.Release) ist fehlgeschlagen: $($_.Exception.Message) Es werden zwischengespeicherte Daten verwendet."
             Write-Warning $script:DataWarning
+            $script:SourceMetadata = if ($cacheMetadata -and -not $cacheMetadata.MetadataError) { $cacheMetadata } else { $null }
+            $script:CacheStatus = 'refresh-failed'
         }
+    }
+    elseif ($officialExport) {
+        $script:SourceMetadata = $cacheMetadata
+        $script:CacheStatus = 'current-cache'
+    }
+    elseif ($cacheExists) {
+        $script:SourceMetadata = if ($cacheMetadata -and -not $cacheMetadata.MetadataError) { $cacheMetadata } else { $null }
+        $script:CacheStatus = 'release-unverified-cache'
+        if ($script:SourceMetadata) {
+            $script:DataWarning = "Der aktuelle ÖKOBAUDAT-Datenstand konnte nicht auf der offiziellen Downloadseite geprüft werden ($releasePageError). Es werden zwischengespeicherte Daten aus $($script:SourceMetadata.Release) verwendet."
+        }
+        else {
+            $script:DataWarning = "Der aktuelle ÖKOBAUDAT-Datenstand konnte nicht auf der offiziellen Downloadseite geprüft werden ($releasePageError). Der verwendete Cache hat keine verifizierbaren Datenstands-Metadaten."
+        }
+        Write-Warning $script:DataWarning
+    }
+    else {
+        throw "Die offizielle ÖKOBAUDAT-Downloadseite konnte nicht geprüft werden und es gibt keinen Cache: $releasePageError"
     }
 
     $script:RetrievedAt = (Get-Item -LiteralPath $script:CacheFile).LastWriteTimeUtc.ToString('yyyy-MM-dd')
+    if ($script:SourceMetadata -and $script:SourceMetadata.Release) {
+        $script:DataSource = "OEKOBAUDAT $($script:SourceMetadata.Release), CSV-Export, EN 15804+A2, Modul A1-A3"
+    }
+    elseif ($script:SourceMetadata) {
+        $script:DataSource = 'OEKOBAUDAT-CSV-Export, Release nicht verfügbar, EN 15804+A2, Modul A1-A3'
+    }
+    else {
+        $script:DataSource = 'OEKOBAUDAT-CSV-Export, Datenstand nicht verifiziert, EN 15804+A2, Modul A1-A3'
+    }
     $encoding = [System.Text.Encoding]::GetEncoding(28591)
     $parser = [Microsoft.VisualBasic.FileIO.TextFieldParser]::new($script:CacheFile, $encoding)
     $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
@@ -359,6 +828,12 @@ function Ensure-Dataset {
                 RatingCount = 0
                 Registration = Get-Field -Fields $fields -Columns $columns -Name 'Registrierungsnummer'
                 Url = "https://www.oekobaudat.de/OEKOBAU.DAT/resource/processes/$(Get-Field -Fields $fields -Columns $columns -Name 'UUID')?version=$([uri]::EscapeDataString((Get-Field -Fields $fields -Columns $columns -Name 'Version')))"
+                SourceName = 'ÖKOBAUDAT'
+                SourceUrl = if ($script:SourceMetadata) { $script:SourceMetadata.ReleasePageUrl } else { $script:ReleasePageUrl }
+                DataStockId = if ($script:SourceMetadata) { $script:SourceMetadata.DataStockId } else { $null }
+                DataStockVersion = if ($script:SourceMetadata) { $script:SourceMetadata.Release } else { $null }
+                RetrievedAt = $script:RetrievedAt
+                CacheStatus = $script:CacheStatus
                 Metrics = $metrics.ToArray()
             })
         }
@@ -421,7 +896,18 @@ function Ensure-Dataset {
         }
     }
 
-    Write-Host ("OEKOBAUDAT bereit: {0} Datensaetze; relative Gruppen nur innerhalb vergleichbarer Datensaetze." -f $script:Dataset.Length)
+    $script:CatalogIndex = Build-MaterialCatalogIndex -Records $script:Dataset
+    try {
+        Write-CatalogManifest -RecordCount $script:Dataset.Length
+    }
+    catch {
+        $script:CatalogStatus = 'manifest-write-failed'
+        $manifestWarning = "Der lokale Katalogindex ist im Arbeitsspeicher verfügbar, aber das Quellenmanifest konnte nicht gespeichert werden: $($_.Exception.Message)"
+        $script:DataWarning = if ([string]::IsNullOrWhiteSpace($script:DataWarning)) { $manifestWarning } else { "$($script:DataWarning) $manifestWarning" }
+        Write-Warning $manifestWarning
+    }
+
+    Write-Host ("OEKOBAUDAT-Katalog bereit: {0} Datensaetze; Quellenindex im Arbeitsspeicher." -f $script:Dataset.Length)
 }
 
 function Get-ItemView {
@@ -454,15 +940,25 @@ function Get-ItemView {
         }
         Registration = $Record.Registration
         Url = $Record.Url
+        SourceName = $Record.SourceName
+        SourceUrl = $Record.SourceUrl
+        DataStockId = $Record.DataStockId
+        DataStockVersion = $Record.DataStockVersion
+        RetrievedAt = $Record.RetrievedAt
+        CacheStatus = $Record.CacheStatus
         Metrics = @($Record.Metrics)
     }
 }
 
 function Get-SearchItemView {
-    param([object]$Record)
+    param(
+        [object]$Record,
+        [string[]]$QueryTerms
+    )
 
     $item = Get-ItemView -Record $Record
     $item.PSObject.Properties.Remove('Metrics')
+    $item | Add-Member -NotePropertyName MatchedQueries -NotePropertyValue @(Get-RecordMatchedTerms -Record $Record -QueryTerms $QueryTerms)
     return $item
 }
 
@@ -511,6 +1007,7 @@ function Handle-Request {
             ready = $true
             source = $script:DataSource
             datasetLoaded = ($null -ne $script:Dataset)
+            provenance = (Get-SourceProvenance)
         }
         return
     }
@@ -524,10 +1021,10 @@ function Handle-Request {
         }
 
         Ensure-Dataset
-        $matches = @($script:Dataset | Where-Object {
-            $_.Name.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-            $_.Category.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-        })
+        $search = Find-MaterialRecords -Records $script:Dataset -Index $script:CatalogIndex -Query $query
+        $queryTerms = $search.QueryTerms
+        $matchedTerms = $search.MatchedTerms
+        $matches = $search.Records
         $families = [System.Collections.Generic.List[object]]::new()
         foreach ($family in @($matches | Group-Object -Property {
             if (-not [string]::IsNullOrWhiteSpace($_.ComparisonClass)) {
@@ -576,7 +1073,7 @@ function Handle-Request {
                     ReferenceAmount = $firstItem.ReferenceAmount
                     RatingGroup = $firstItem.RatingGroup
                     Count = $peerRecords.Count
-                    Items = @($peerRecords | Select-Object -First 5 | ForEach-Object { Get-SearchItemView -Record $_ })
+                    Items = @($peerRecords | Select-Object -First 5 | ForEach-Object { Get-SearchItemView -Record $_ -QueryTerms $queryTerms })
                 })
             }
 
@@ -592,23 +1089,21 @@ function Handle-Request {
         }
         $orderedFamilies = @($families |
             Sort-Object -Property @{
-                Expression = {
-                    if ($_.Name.Equals($query, [System.StringComparison]::OrdinalIgnoreCase)) { 0 }
-                    elseif ($_.Name.StartsWith("$query ", [System.StringComparison]::OrdinalIgnoreCase)) { 1 }
-                    elseif ($_.Name.StartsWith($query, [System.StringComparison]::OrdinalIgnoreCase)) { 2 }
-                    else { 3 }
-                }
+                Expression = { Get-SearchTermPriority -Name $_.Name -QueryTerms $queryTerms }
             }, Category, Name)
         $groups = @($orderedFamilies | Select-Object -First 10)
 
         Send-Json -Context $Context -StatusCode 200 -Value @{
             query = $query
+            queryTerms = $queryTerms
+            matchedTerms = $matchedTerms
             count = $matches.Count
             groupCount = $orderedFamilies.Count
             groups = $groups
             retrievedAt = $script:RetrievedAt
             warning = $script:DataWarning
             source = $script:DataSource
+            provenance = (Get-SourceProvenance)
         }
         return
     }
@@ -693,6 +1188,7 @@ function Handle-Request {
             retrievedAt = $script:RetrievedAt
             warning = $script:DataWarning
             source = $script:DataSource
+            provenance = (Get-SourceProvenance)
         }
         return
     }
@@ -702,11 +1198,12 @@ function Handle-Request {
         '/styles.css' = 'styles.css'
         '/swiss.css' = 'swiss.css'
         '/app.js' = 'app.js'
+        '/ifc.mjs' = 'ifc.mjs'
         '/hero-landscape.svg' = 'hero-landscape.svg'
     }
     if ($staticFiles.ContainsKey($path)) {
         $file = Join-Path (Join-Path $script:Root 'public') $staticFiles[$path]
-        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/hero-landscape.svg') { 'image/svg+xml; charset=utf-8' } else { 'text/css; charset=utf-8' }
+        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js' -or $path -eq '/ifc.mjs') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/hero-landscape.svg') { 'image/svg+xml; charset=utf-8' } else { 'text/css; charset=utf-8' }
         $bytes = [System.IO.File]::ReadAllBytes($file)
         Send-Response -Context $Context -StatusCode 200 -ContentType $contentType -Body $bytes
         return
@@ -715,37 +1212,39 @@ function Handle-Request {
     Send-Json -Context $Context -StatusCode 404 -Value @{ error = 'Diese Seite wurde nicht gefunden.' }
 }
 
-$listener = [System.Net.HttpListener]::new()
-$listener.Prefixes.Add('http://127.0.0.1:8765/')
-try {
-    $listener.Start()
-}
-catch {
-    Write-Error "Der lokale Webserver konnte nicht gestartet werden. Ist Port 8765 bereits belegt? $($_.Exception.Message)"
-    exit 1
-}
+if (-not $script:TestMode) {
+    $listener = [System.Net.HttpListener]::new()
+    $listener.Prefixes.Add('http://127.0.0.1:8765/')
+    try {
+        $listener.Start()
+    }
+    catch {
+        Write-Error "Der lokale Webserver konnte nicht gestartet werden. Ist Port 8765 bereits belegt? $($_.Exception.Message)"
+        exit 1
+    }
 
-Write-Host 'Die App laeuft lokal unter http://127.0.0.1:8765/'
-Write-Host 'Beenden: dieses Fenster schliessen oder Strg+C druecken.'
-Start-Process 'http://127.0.0.1:8765/'
+    Write-Host 'Die App laeuft lokal unter http://127.0.0.1:8765/'
+    Write-Host 'Beenden: dieses Fenster schliessen oder Strg+C druecken.'
+    Start-Process 'http://127.0.0.1:8765/'
 
-try {
-    while ($listener.IsListening) {
-        $context = $listener.GetContext()
-        try {
-            Handle-Request -Context $context
-        }
-        catch {
-            Write-Host ("Anfrage fehlgeschlagen: {0}" -f $_.Exception.Message) -ForegroundColor Red
-            if ($context.Response.OutputStream.CanWrite) {
-                Send-Json -Context $context -StatusCode 500 -Value @{
-                    error = "Die OEKOBAUDAT-Daten konnten nicht verarbeitet werden: $($_.Exception.Message)"
+    try {
+        while ($listener.IsListening) {
+            $context = $listener.GetContext()
+            try {
+                Handle-Request -Context $context
+            }
+            catch {
+                Write-Host ("Anfrage fehlgeschlagen: {0}" -f $_.Exception.Message) -ForegroundColor Red
+                if ($context.Response.OutputStream.CanWrite) {
+                    Send-Json -Context $context -StatusCode 500 -Value @{
+                        error = "Die OEKOBAUDAT-Daten konnten nicht verarbeitet werden: $($_.Exception.Message)"
+                    }
                 }
             }
         }
     }
-}
-finally {
-    $listener.Stop()
-    $listener.Close()
+    finally {
+        $listener.Stop()
+        $listener.Close()
+    }
 }

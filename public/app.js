@@ -1,3 +1,12 @@
+import {
+  assessProjectDataQuality,
+  calculateContribution,
+  datasetUnitInfo,
+  flattenSearchResults,
+  isDatasetValid,
+  parseIfcText,
+} from "/ifc.mjs";
+
 const form = document.querySelector("#search-form");
 const input = document.querySelector("#material-query");
 const useCase = document.querySelector("#use-case");
@@ -10,8 +19,14 @@ const detailPanel = document.querySelector("#detail-panel");
 const searchButton = form.querySelector("button");
 const modelFile = document.querySelector("#model-file");
 const modelStatus = document.querySelector("#model-status");
+const modelResults = document.querySelector("#ifc-results");
+const modelResultsSummary = document.querySelector("#ifc-results-summary");
+const modelResultsBody = document.querySelector("#ifc-results-body");
+const modelTotal = document.querySelector("#ifc-total");
 let selectedItem = null;
 let selectedButton = null;
+let ifcState = null;
+let modelLoadRevision = 0;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -206,12 +221,36 @@ function renderResults(data) {
     });
   });
 
+  const provenance = data.provenance || {};
+  const cacheStatus = ({
+    updated: "gerade aktualisiert",
+    "current-cache": "Tagescache",
+    "refresh-failed": "Cache nach fehlgeschlagener Aktualisierung",
+    "release-unverified-cache": "Cache, Datenstand nicht verifiziert",
+  })[provenance.cacheStatus] || "lokaler Datenstand";
+  const release = provenance.release ? ` Datenstand ${provenance.release}.` : "";
+  const hasCatalogCount = provenance.catalogRecordCount !== null &&
+    provenance.catalogRecordCount !== undefined &&
+    Number.isFinite(Number(provenance.catalogRecordCount));
+  const catalogCount = hasCatalogCount
+    ? ` Lokaler Suchindex mit ${formatNumber(provenance.catalogRecordCount)} Datensätzen.`
+    : "";
+  const matchedAliases = (data.matchedTerms || [])
+    .filter((term) => term.toLocaleLowerCase("de") !== String(data.query || "").toLocaleLowerCase("de"));
+  const aliasNote = matchedAliases.length
+    ? ` Synonym-/Alternativtreffer über: ${matchedAliases.join(", ")}.`
+    : "";
+  const usageNote = provenance.usageNotice ? ` ${provenance.usageNotice}` : "";
+  const provenanceText = `Quelle: ${readableText(data.source)}.${release} Cache: ${cacheStatus}; lokal abgerufen am ${data.retrievedAt || "unbekannt"}.${catalogCount}${aliasNote}${usageNote}`;
   if (data.warning) {
-    setMessage("Zwischengespeicherte Daten", data.warning);
+    const title = provenance.cacheStatus === "refresh-failed" || provenance.cacheStatus === "release-unverified-cache"
+      ? "Zwischengespeicherte Daten"
+      : "Hinweis zum Datenstand";
+    setMessage(title, `${data.warning} ${provenanceText}`);
   } else {
     setMessage(
       `${data.groups.length} Materialgruppen gefunden`,
-      `Quelle: ${readableText(data.source)}. ${data.count} Datensätze in ${data.groupCount} Gruppen; angezeigt werden höchstens zehn Gruppen. Daten lokal abgerufen am ${data.retrievedAt}.`,
+      `${data.count} Datensätze in ${data.groupCount} Gruppen; angezeigt werden höchstens zehn Gruppen. ${provenanceText}`,
     );
   }
 }
@@ -393,7 +432,7 @@ form.addEventListener("submit", async (event) => {
   resultsSection.hidden = true;
   selectedItem = null;
   selectedButton = null;
-  setMessage("ÖKOBAUDAT wird durchsucht", "Beim ersten Suchlauf wird der offizielle CSV-Export geladen und lokal zwischengespeichert. Das kann einen Moment dauern.", "loading");
+  setMessage("ÖKOBAUDAT wird durchsucht", "Die offizielle Downloadseite wird auf den aktuellen Datenstand geprüft; die verlinkte CSV-Datei wird bei Bedarf lokal zwischengespeichert.", "loading");
 
   try {
     const data = await requestJson(`/api/search?q=${encodeURIComponent(query)}`);
@@ -406,18 +445,312 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-modelFile.addEventListener("change", () => {
-  const file = modelFile.files?.[0];
-  if (!file) {
-    modelStatus.textContent = "Noch kein Modell ausgewählt. Native Archicad-PLN-Dateien werden nicht unterstützt.";
+function getSelectedDataset(row, searchResult) {
+  if (!Number.isInteger(row.selectedDatasetIndex)) return null;
+  return searchResult?.items[row.selectedDatasetIndex] || null;
+}
+
+function getDatasetSourceLink(dataset) {
+  try {
+    const url = new URL(dataset?.Url);
+    if (url.protocol === "https:" &&
+      (url.hostname === "oekobaudat.de" || url.hostname.endsWith(".oekobaudat.de"))) {
+      return `<a href="${escapeHtml(url.href)}" target="_blank" rel="noreferrer">ÖKOBAUDAT-Quelldatensatz ↗</a>`;
+    }
+  } catch {
+    return "ÖKOBAUDAT-Quelldatensatz-Link nicht verfügbar";
+  }
+  return "ÖKOBAUDAT-Quelldatensatz-Link nicht verfügbar";
+}
+
+function getDatasetValidityText(dataset) {
+  if (isDatasetValid(dataset)) return `gültig bis ${dataset.ValidUntil || "nicht angegeben"}`;
+  if (dataset?.Validity === "expired") return `abgelaufen seit ${dataset.ValidUntil || "unbekannt"}`;
+  return "Gültigkeit unbekannt";
+}
+
+function getPublicSourceHints() {
+  return `<small class="ifc-public-source-hints">Weitere Quellen zur manuellen Prüfung: <a href="https://www.wecobis.de/index.php?id=16043" target="_blank" rel="noreferrer">WECOBIS</a> (Materialkontext, kein GWP-Faktor) · <a href="https://ibu-epd.com/veroeffentlichte-epds/" target="_blank" rel="noreferrer">IBU-EPDs</a> (öffentliche PDF/HTML-Angaben prüfen). Daraus wird hier kein automatischer Zahlenwert übernommen.</small>`;
+}
+
+function getQuantityLabel(quantity) {
+  if (quantity.error) return `${quantity.name}: ${quantity.error}`;
+  const original = `${formatNumber(quantity.value)} ${quantity.sourceUnit || quantity.unit || quantity.dimension}`;
+  const converted = quantity.sourceUnit && quantity.unit
+    ? ` → ${formatNumber(quantity.canonicalValue)} ${quantity.unit}`
+    : "";
+  return `${quantity.name}: ${original}${converted}`;
+}
+
+function renderIfcResults() {
+  if (!ifcState) {
+    modelResults.hidden = true;
     return;
   }
 
+  modelResults.hidden = false;
+  const completed = [];
+  const unresolved = [];
+  const assessmentEntries = [];
+  modelResultsBody.innerHTML = ifcState.rows.map((row, index) => {
+    const element = row.element;
+    const material = element.materials.length === 1 ? element.materials[0] : "";
+    const searchResult = material ? ifcState.materialSearch.get(material) : null;
+    const candidates = searchResult?.items || [];
+    const dataset = getSelectedDataset(row, searchResult);
+    const quantity = Number.isInteger(row.selectedQuantityIndex)
+      ? element.quantities[row.selectedQuantityIndex]
+      : null;
+    let calculation = null;
+    let status = "";
+    let statusClass = "is-pending";
+
+    if (element.materialStatus === "ambiguous") {
+      status = element.materials.length > 1
+        ? `Mehrere Materialien (${element.materials.join(", ")}); die Elementmenge lässt sich keinem Material sicher zuordnen.`
+        : element.materialIssue || "Die IFC-Materialzuordnung lässt sich nicht eindeutig lesen.";
+    } else if (element.materialStatus === "missing") {
+      status = "Keine explizite IFC-Materialzuordnung vorhanden.";
+    } else if (!searchResult || searchResult.loading) {
+      status = "ÖKOBAUDAT-Datensätze werden gesucht …";
+    } else if (searchResult.error) {
+      status = `Datensatzsuche fehlgeschlagen: ${searchResult.error}`;
+    } else if (!candidates.length) {
+      status = "Keine ÖKOBAUDAT-Treffer für dieses IFC-Material.";
+    } else if (!dataset) {
+      status = "ÖKOBAUDAT-Datensatz auswählen.";
+    } else if (!isDatasetValid(dataset)) {
+      status = dataset.Validity === "expired"
+        ? `Datensatz abgelaufen (${dataset.ValidUntil || "Ablaufjahr unbekannt"}); er wird nicht eingerechnet.`
+        : "Gültigkeit des Datensatzes unbekannt; er wird nicht eingerechnet.";
+    } else {
+      const datasetUnit = datasetUnitInfo(dataset.Unit);
+      const compatibleQuantities = element.quantities
+        .map((item, quantityIndex) => ({ item, quantityIndex }))
+        .filter(({ item }) => !item.error &&
+          Number.isFinite(item.canonicalValue) &&
+          item.canonicalValue >= 0 &&
+          datasetUnit?.dimension === item.dimension);
+      if (!datasetUnit) {
+        status = `Datensatz-Einheit „${dataset.Unit || "unbekannt"}“ wird nicht unterstützt.`;
+      } else if (!compatibleQuantities.length) {
+        status = "Keine explizite IFC-Menge mit kompatibler, unterstützter Einheit vorhanden.";
+      } else if (!quantity) {
+        status = "Passende IFC-Menge auswählen.";
+      } else {
+        try {
+          calculation = calculateContribution(quantity, dataset);
+          status = "Berechnet aus IFC-Menge und gewähltem ÖKOBAUDAT-Datensatz.";
+          statusClass = "is-calculated";
+        } catch (error) {
+          status = error.message;
+        }
+      }
+    }
+
+    if (calculation) completed.push({ calculation, dataset, material });
+    else unresolved.push(element);
+
+    const datasetOptions = candidates.map((candidate, candidateIndex) => {
+      const amount = candidate.ReferenceAmount && candidate.Unit
+        ? `pro ${candidate.ReferenceAmount} ${readableText(candidate.Unit)}`
+        : "Bezugsgröße fehlt";
+      const gwp = candidate.Gwp === null || candidate.Gwp === undefined || candidate.Gwp === ""
+        ? "kein GWP-Wert"
+        : `${formatNumber(candidate.Gwp)} kg CO₂-eq`;
+      const validity = candidate.Validity === "valid"
+        ? "gültig"
+        : candidate.Validity === "expired"
+          ? "abgelaufen"
+          : "Gültigkeit unbekannt";
+      return `<option value="${candidateIndex}" ${candidateIndex === row.selectedDatasetIndex ? "selected" : ""}>${escapeHtml(candidate.Name)} · ${escapeHtml(gwp)} · ${escapeHtml(amount)} · ${escapeHtml(candidate.ReferenceYear || "Jahr unbekannt")} · ${validity}</option>`;
+    }).join("");
+    const quantityOptions = element.quantities.map((item, quantityIndex) => {
+      const incompatible = dataset && datasetUnitInfo(dataset.Unit)?.dimension !== item.dimension;
+      const disabled = Boolean(item.error) || incompatible || item.canonicalValue < 0;
+      return `<option value="${quantityIndex}" ${quantityIndex === row.selectedQuantityIndex ? "selected" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(getQuantityLabel(item))}</option>`;
+    }).join("");
+    const materialCell = element.materialStatus === "ready"
+      ? `<strong>${escapeHtml(material)}</strong><small>${escapeHtml(element.materialSource ? `Zuordnung aus ${element.materialSource}` : "Materialquelle nicht angegeben")}</small>
+          <label class="ifc-control-label" for="ifc-dataset-${index}">Datensatz</label>
+          <select id="ifc-dataset-${index}" data-ifc-dataset="${index}" aria-label="ÖKOBAUDAT-Datensatz für ${escapeHtml(element.name)}">
+            <option value="">Datensatz auswählen</option>${datasetOptions}
+          </select>${dataset ? `<small>${getDatasetSourceLink(dataset) || "ÖKOBAUDAT-Quelle: sicherer Datensatzlink nicht verfügbar"} · Version ${escapeHtml(dataset.Version || "nicht angegeben")} · Bezugsmenge ${escapeHtml(dataset.ReferenceAmount || "nicht angegeben")} ${escapeHtml(readableText(dataset.Unit || ""))} · ${escapeHtml(getDatasetValidityText(dataset))}</small>` : ""}${!calculation ? getPublicSourceHints() : ""}`
+      : `<strong>${element.materials.length ? element.materials.map(escapeHtml).join(", ") : "Material fehlt"}</strong><small>${element.materialStatus === "ambiguous" ? escapeHtml(element.materialIssue || "Mehrfachzuordnung; keine Mengenaufteilung geraten") : "Keine direkte oder eindeutige Typzuordnung"}</small>`;
+    const contributionCell = calculation
+      ? `<strong>${formatNumber(calculation.contribution)} kg CO₂-eq</strong><small>${formatNumber(calculation.gwp)} kg CO₂-eq × ${formatNumber(calculation.datasetQuantity)} ${escapeHtml(readableText(calculation.datasetUnit))} ÷ ${formatNumber(calculation.referenceAmount)} ${escapeHtml(readableText(calculation.datasetUnit))}</small>`
+      : "<span>—</span>";
+
+    assessmentEntries.push({ calculation, dataset, material, contained: element.contained });
+    return `<tr>
+      <th scope="row"><strong>${escapeHtml(element.name)}</strong><small>${escapeHtml(element.type)} · #${escapeHtml(element.id)}</small></th>
+      <td>${materialCell}</td>
+      <td><label class="ifc-control-label" for="ifc-quantity-${index}">Menge</label>
+        <select id="ifc-quantity-${index}" data-ifc-quantity="${index}" aria-label="IFC-Menge für ${escapeHtml(element.name)}">
+          <option value="">Menge auswählen</option>${quantityOptions}
+        </select></td>
+      <td>${contributionCell}</td>
+      <td><span class="ifc-row-status ${statusClass}">${escapeHtml(status)}</span></td>
+    </tr>`;
+  }).join("");
+
+  const containedRows = ifcState.rows.filter((row) => row.element.contained).length;
+  const uncontainedRows = ifcState.rows.length - containedRows;
+  const scopeSummary = ifcState.containmentAvailable
+    ? `${containedRows} erfasste ${containedRows === 1 ? "Bauteil ist" : "Bauteile sind"} in der IFC-Raumstruktur enthalten; ${uncontainedRows} nicht.`
+    : "Keine IFC-Raumstrukturzuordnung gefunden; die Vollständigkeit des Modellumfangs ist nicht prüfbar.";
+  modelResultsSummary.textContent =
+    `Schema ${ifcState.schema} · ${ifcState.rows.length} erfasste Bauteile · ${completed.length} berechenbar. ${scopeSummary}`;
+
+  const quality = assessProjectDataQuality(assessmentEntries, ifcState.containmentAvailable);
+  if (!completed.length) {
+    modelTotal.innerHTML = `<div class="ifc-total-main">
+        <div><p class="ifc-total-eyebrow">ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz</p><p class="ifc-total-empty">Noch keine Beiträge berechenbar</p></div>
+        <div class="ifc-quality" data-level="${quality.level}"><strong>${escapeHtml(quality.label)}</strong><p>${escapeHtml(quality.explanation)}</p></div>
+      </div>
+      <p class="ifc-total-limit">Ohne berechenbare Beiträge wird keine Zahl ausgegeben. Es gibt keine statistische Unsicherheitsspanne; fehlende Daten werden nicht ergänzt oder geschätzt.</p>`;
+  } else {
+    const subtotal = completed.reduce((sum, item) => sum + item.calculation.contribution, 0);
+    const scopeExplanation = unresolved.length
+      ? `${completed.length} von ${ifcState.rows.length} erfassten Bauteilen sind in der Zahl enthalten; ${unresolved.length} bleiben unberechnet.`
+      : `Alle ${ifcState.rows.length} vom Parser erfassten Bauteile sind berechenbar.`;
+    const fileScopeWarning = !ifcState.containmentAvailable
+      ? "Eine IFC-Raumstrukturzuordnung fehlt; die Vollständigkeit des Modellumfangs ist nicht prüfbar."
+      : uncontainedRows
+        ? `${uncontainedRows} erfasste Bauteile sind keiner IFC-Raumstruktur zugeordnet; der Modellumfang ist nicht prüfbar.`
+        : "Die Vollständigkeit des IFC-Exports ist nicht unabhängig bestätigt.";
+    const groupedDatasets = new Map();
+    for (const { calculation, dataset } of completed) {
+      const key = `${dataset.Id || dataset.Name}|${dataset.Version || ""}`;
+      const group = groupedDatasets.get(key);
+      if (group) {
+        group.count += 1;
+      } else {
+        groupedDatasets.set(key, { dataset, calculation, count: 1 });
+      }
+    }
+    const datasetSources = [...groupedDatasets.values()].map(({ dataset, calculation, count }) =>
+      `<li><strong>${escapeHtml(dataset.Name || "ÖKOBAUDAT-Datensatz")}</strong> · Version ${escapeHtml(dataset.Version || "nicht angegeben")}
+        <span>${getDatasetSourceLink(dataset) || "ÖKOBAUDAT-Quelle: sicherer Datensatzlink nicht verfügbar"}</span>
+        <span>${formatNumber(calculation.gwp)} kg CO₂-eq je ${formatNumber(calculation.referenceAmount)} ${escapeHtml(readableText(calculation.datasetUnit))} · Referenzjahr ${escapeHtml(dataset.ReferenceYear || "nicht angegeben")} · ${escapeHtml(dataset.Owner || "Dateneigner nicht angegeben")}</span>
+        <span>${count} ${count === 1 ? "Bauteil" : "Bauteile"} · ${escapeHtml(getDatasetValidityText(dataset))}</span></li>`).join("");
+    modelTotal.innerHTML = `<div class="ifc-total-main">
+        <div>
+          <p class="ifc-total-eyebrow">ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz</p>
+          <p class="ifc-total-number">${formatNumber(subtotal)} <span>kg CO₂-eq</span></p>
+          <p class="ifc-total-caption">${escapeHtml(scopeExplanation)} ${escapeHtml(fileScopeWarning)}</p>
+        </div>
+        <div class="ifc-quality" data-level="${quality.level}"><strong>${escapeHtml(quality.label)}</strong><p>${escapeHtml(quality.explanation)}</p></div>
+      </div>
+      <p class="ifc-total-method"><strong>Systemgrenze:</strong> Produktionsphase A1–A3 nach EN 15804+A2, nicht der gesamte Lebenszyklus. <strong>Rechenweg:</strong> Summe aus (IFC-Menge ÷ Bezugsmenge) × ÖKOBAUDAT-GWP.</p>
+      <div class="ifc-total-sources"><h3>Verwendete ÖKOBAUDAT-Datensätze</h3><ul>${datasetSources}</ul></div>
+      <p class="ifc-total-limit">Komponentenbasierte Schätzung, keine geprüfte Vollbilanz. Das Qualitätslabel beschreibt Datenlage und Zuordnung, keine statistische Genauigkeit; eine belastbare Unsicherheitsspanne liegt nicht vor.</p>`;
+  }
+}
+
+modelResults.addEventListener("change", (event) => {
+  const control = event.target;
+  const datasetIndex = Number(control.dataset.ifcDataset);
+  const quantityIndex = Number(control.dataset.ifcQuantity);
+  if (!ifcState) return;
+
+  if (control.matches("[data-ifc-dataset]")) {
+    const row = ifcState.rows[datasetIndex];
+    const material = row?.element.materials[0];
+    const searchResult = material ? ifcState.materialSearch.get(material) : null;
+    row.selectedDatasetIndex = control.value === "" ? null : Number(control.value);
+    row.selectedQuantityIndex = null;
+    const dataset = getSelectedDataset(row, searchResult);
+    if (dataset) {
+      const compatible = row.element.quantities
+        .map((quantity, index) => ({ quantity, index }))
+        .filter(({ quantity }) => !quantity.error &&
+          quantity.canonicalValue >= 0 &&
+          datasetUnitInfo(dataset.Unit)?.dimension === quantity.dimension);
+      if (compatible.length === 1) row.selectedQuantityIndex = compatible[0].index;
+    }
+  } else if (control.matches("[data-ifc-quantity]")) {
+    const row = ifcState.rows[quantityIndex];
+    if (row) row.selectedQuantityIndex = control.value === "" ? null : Number(control.value);
+  } else {
+    return;
+  }
+  renderIfcResults();
+});
+
+modelFile.addEventListener("change", async () => {
+  const revision = ++modelLoadRevision;
+  const file = modelFile.files?.[0];
+  if (!file) {
+    ifcState = null;
+    modelStatus.textContent = "Noch kein Modell ausgewählt. Native Archicad-PLN-Dateien werden nicht unterstützt.";
+    renderIfcResults();
+    return;
+  }
   if (!file.name.toLowerCase().endsWith(".ifc")) {
     modelStatus.textContent = "Nicht unterstützt: Bitte einen IFC-Export aus Archicad wählen. PLN-Dateien werden nicht verarbeitet.";
     modelFile.value = "";
+    ifcState = null;
+    renderIfcResults();
+    return;
+  }
+  if (file.size > 100 * 1024 * 1024) {
+    modelStatus.textContent = "Die IFC-Datei ist größer als 100 MB und kann nicht lokal verarbeitet werden.";
+    ifcState = null;
+    renderIfcResults();
     return;
   }
 
-  modelStatus.textContent = `Ausgewählt: ${file.name}. Demo: Die Datei wurde nicht hochgeladen oder ausgewertet; die Materialsuche oben funktioniert unabhängig davon.`;
+  ifcState = null;
+  renderIfcResults();
+  modelStatus.textContent = `Lese ${file.name} lokal im Browser; die Datei wird nicht hochgeladen …`;
+  try {
+    const parsed = parseIfcText(await file.text());
+    if (revision !== modelLoadRevision) return;
+    ifcState = {
+      ...parsed,
+      rows: parsed.elements.map((element) => ({
+        element,
+        selectedDatasetIndex: null,
+        selectedQuantityIndex: null,
+      })),
+      materialSearch: new Map(),
+    };
+    const materialNames = [...new Set(parsed.elements
+      .filter((element) => element.materialStatus === "ready")
+      .map((element) => element.materials[0]))];
+    for (const material of materialNames) {
+      if (revision !== modelLoadRevision) return;
+      const search = { items: [], loading: true, error: null };
+      ifcState.materialSearch.set(material, search);
+      modelStatus.textContent = `IFC lokal gelesen. Suche ÖKOBAUDAT-Datensätze für „${material}“ …`;
+      renderIfcResults();
+      if (material.trim().length < 2) {
+        search.loading = false;
+        search.error = "Materialname ist zu kurz für die ÖKOBAUDAT-Suche.";
+        continue;
+      }
+      try {
+        const data = await requestJson(`/api/search?q=${encodeURIComponent(material)}`);
+        if (revision !== modelLoadRevision) return;
+        search.items = flattenSearchResults(data)
+          .filter((item) => item?.Id && item?.Version)
+          .filter((item, index, list) => list.findIndex((other) =>
+            other.Id === item.Id && other.Version === item.Version) === index);
+      } catch (error) {
+        if (revision !== modelLoadRevision) return;
+        search.error = error.message;
+      } finally {
+        search.loading = false;
+      }
+    }
+    if (revision !== modelLoadRevision) return;
+    modelStatus.textContent = `${file.name} wurde lokal ausgewertet. Wähle pro Bauteil einen Datensatz und eine passende IFC-Menge; es werden keine Mengen geschätzt.`;
+    renderIfcResults();
+  } catch (error) {
+    if (revision !== modelLoadRevision) return;
+    ifcState = null;
+    modelStatus.textContent = `IFC-Import fehlgeschlagen: ${error.message}`;
+    renderIfcResults();
+  }
 });
