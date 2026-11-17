@@ -52,7 +52,7 @@ if (pagesDemo) {
   document.querySelector("#model-title").textContent = "IFC-Modell lokal ausprobieren";
   document.querySelector(".model-copy > p:not(.step-label)").textContent =
     "IFC-Dateien werden lokal im Browser gelesen und nicht hochgeladen. Die optionale Rechenvorschau nutzt ausschließlich synthetische Demo-GWP-Werte und ist keine reale oder geprüfte Ökobilanz.";
-  document.querySelector("#source-title").nextElementSibling.querySelector("p").innerHTML =
+  document.querySelector("#source-title").nextElementSibling.innerHTML =
     "<strong>GitHub-Pages-Demo:</strong> Suchtreffer und GWP-Werte sind synthetische Beispieldaten ohne Quellenbeleg. Es gibt keine Live-ÖKOBAUDAT-Suche, kein Backend und keine geprüfte Ökobilanz. Die unten verlinkten Stellen sind nur externe Informationsseiten und keine Belege für die Demo-Werte.";
   document.querySelector("#ifc-results thead th:nth-child(2)").textContent = "Beispielmaterial / Demo-Datensatz";
   document.querySelector("#legend-title").textContent = "Beispielwerte ohne Bewertung";
