@@ -8,6 +8,7 @@ Unter Windows `Start-App.bat` öffnen. Die App läuft lokal unter `http://127.0.
 
 ## Umfang und Grenzen
 
+- Die Oberfläche verwendet ein responsives Swiss-Style-Raster mit 12/8/4 Spalten, linksbündiger Grotesktypografie und Schwarz, Weiß sowie Pastellgrün. Die dezente Hintergrundbewegung berücksichtigt `prefers-reduced-motion`.
 - Die Suche zeigt höchstens zehn zusammengefasste Materialgruppen; wiederkehrende Rezept-/Werkvarianten werden gebündelt. Datensatzversionen, Quellen, Einheiten, Bezugsgrößen und Gültigkeit bleiben in den Detailansichten sichtbar.
 - „Gut“, „mittel“ und „schlecht“ sind vorläufige relative Drittel ausschließlich innerhalb gültiger ÖKOBAUDAT-Datensätze mit gleicher Kategorie, Einheit, Bezugsmenge, Norm und Lebenszyklusphase sowie passendem Namens-/Technikprofil. Gleiche Werte werden nicht getrennt, daher können die Gruppen unterschiedlich groß sein. Bei weniger als drei passenden Datensätzen oder identischen GWP-Werten bleibt die Einordnung nicht klassifiziert.
 - Ein niedrigerer GWP-Wert wird nur als Datensatzvergleich innerhalb derselben vorläufigen Vergleichsgruppe gezeigt. Gemeinsam verfügbare Indikatoren werden mit beiden Rohwerten und Einheiten separat ausgewiesen; sie werden nicht zu einer Gesamtpunktzahl verrechnet. Das ist kein Materialersatz und bestätigt keine technische oder funktionale Gleichwertigkeit.

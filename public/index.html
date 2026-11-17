@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f9fc">
+  <meta name="theme-color" content="#ffffff">
   <title>Material-Kompass – CO₂ &amp; Ökobilanz</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/swiss.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -18,9 +19,26 @@
   </header>
 
   <main>
-    <section class="intro">
-      <p class="eyebrow"><span class="eyebrow-dot"></span>Materialien bewusst vergleichen</p>
-      <h1>Ein guter Entwurf<br><span>beginnt mit guten Materialien.</span></h1>
+    <section class="intro" aria-labelledby="page-title">
+      <div class="intro-copy-block">
+        <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>Materialien bewusst vergleichen</p>
+        <h1 id="page-title">Ein guter Entwurf<br><span>beginnt mit guten Materialien.</span></h1>
+      </div>
+      <svg class="hero-tree" viewBox="0 0 360 440" role="presentation" aria-hidden="true" focusable="false">
+        <path class="tree-trunk" d="M183 411c-3-69 1-113-2-157m1 104c-31-45-49-75-73-110m73 74c29-42 45-70 68-103m-67 41c-23-33-36-54-51-83m53 48c19-33 32-52 47-77m-50 30c-2-35-1-58 2-87" />
+        <path class="tree-ground" d="M108 412h150" />
+        <g class="tree-crown">
+          <circle cx="185" cy="72" r="44" />
+          <circle cx="139" cy="105" r="39" />
+          <circle cx="226" cy="112" r="43" />
+          <circle cx="101" cy="151" r="34" />
+          <circle cx="177" cy="137" r="44" />
+          <circle cx="264" cy="158" r="35" />
+          <circle cx="127" cy="194" r="39" />
+          <circle cx="213" cy="195" r="42" />
+          <circle cx="169" cy="224" r="34" />
+        </g>
+      </svg>
       <p class="intro-copy">Finde passende ÖKOBAUDAT-Datensätze, vergleiche CO₂-Kennwerte unter gleichen Bezugsbedingungen und erkenne Unterschiede zwischen Produktvarianten. Relative Gruppen gelten nur innerhalb einer passenden Vergleichsgruppe.</p>
     </section>
 

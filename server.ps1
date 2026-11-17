@@ -623,6 +623,7 @@ function Handle-Request {
     $staticFiles = @{
         '/' = 'index.html'
         '/styles.css' = 'styles.css'
+        '/swiss.css' = 'swiss.css'
         '/app.js' = 'app.js'
     }
     if ($staticFiles.ContainsKey($path)) {
