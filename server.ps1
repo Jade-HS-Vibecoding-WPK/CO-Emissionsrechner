@@ -111,6 +111,33 @@ function Get-ComparisonClass {
     return $familyName
 }
 
+function Get-SearchPeerStatus {
+    param([object]$Record)
+
+    if ($Record.Validity -eq 'valid' -and
+        $null -ne $Record.RatingRank -and
+        $Record.RatingCount -ge 3) {
+        return 'ranked'
+    }
+
+    if ($Record.Validity -eq 'expired') {
+        return 'expired'
+    }
+    if ($Record.Validity -ne 'valid') {
+        return 'validity-unknown'
+    }
+
+    if ($null -ne $Record.Gwp -and
+        -not [string]::IsNullOrWhiteSpace($Record.Category) -and
+        -not [string]::IsNullOrWhiteSpace($Record.ComparisonClass) -and
+        -not [string]::IsNullOrWhiteSpace($Record.Unit) -and
+        -not [string]::IsNullOrWhiteSpace($Record.ReferenceAmount)) {
+        return 'unclassified'
+    }
+
+    return 'incomplete'
+}
+
 function Get-MaterialAlternativeAssessment {
     param(
         [object]$Record,
@@ -502,15 +529,65 @@ function Handle-Request {
             $_.Category.IndexOf($query, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
         })
         $families = [System.Collections.Generic.List[object]]::new()
-        foreach ($family in @($matches | Group-Object -Property { '{0}|{1}' -f $_.Category, $_.FamilyName })) {
-            $familyItems = @($family.Group | Sort-Object -Property Name)
-            $firstItem = $familyItems[0]
+        foreach ($family in @($matches | Group-Object -Property {
+            if (-not [string]::IsNullOrWhiteSpace($_.ComparisonClass)) {
+                return '{0}|{1}' -f $_.Category, $_.ComparisonClass
+            }
+
+            return '{0}|{1}|{2}' -f $_.Category, $_.FamilyName, $_.Id
+        })) {
+            $peerGroups = @($family.Group | Group-Object -Property {
+                $status = Get-SearchPeerStatus -Record $_
+                if ($status -eq 'incomplete') {
+                    return '{0}|{1}' -f $status, $_.Id
+                }
+
+                return '{0}|{1}|{2}|{3}|{4}|{5}' -f $status, $_.Category, $_.ComparisonClass, $_.Unit, $_.ReferenceAmount, $_.Validity
+            })
+            $orderedPeerGroups = @($peerGroups | Sort-Object -Property @{
+                Expression = {
+                    switch (Get-SearchPeerStatus -Record $_.Group[0]) {
+                        'ranked' { 0 }
+                        'unclassified' { 1 }
+                        'expired' { 2 }
+                        'validity-unknown' { 3 }
+                        default { 4 }
+                    }
+                }
+            }, @{
+                Expression = { $_.Group[0].ComparisonClass }
+            }, @{
+                Expression = { $_.Group[0].Unit }
+            }, @{
+                Expression = { $_.Group[0].ReferenceAmount }
+            }, @{
+                Expression = { $_.Group[0].Name }
+            })
+            $peerViews = [System.Collections.Generic.List[object]]::new()
+            foreach ($peer in $orderedPeerGroups) {
+                $peerRecords = @($peer.Group | Sort-Object -Property @{
+                    Expression = { if ($null -ne $_.RatingRank) { [double]$_.RatingRank } else { [double]::MaxValue } }
+                }, Name, Version, Id)
+                $firstItem = $peerRecords[0]
+                $peerViews.Add([pscustomobject]@{
+                    Status = Get-SearchPeerStatus -Record $firstItem
+                    ComparisonClass = $firstItem.ComparisonClass
+                    Unit = $firstItem.Unit
+                    ReferenceAmount = $firstItem.ReferenceAmount
+                    RatingGroup = $firstItem.RatingGroup
+                    Count = $peerRecords.Count
+                    Items = @($peerRecords | Select-Object -First 5 | ForEach-Object { Get-SearchItemView -Record $_ })
+                })
+            }
+
+            $firstItem = $family.Group[0]
+            $familyName = if ([string]::IsNullOrWhiteSpace($firstItem.ComparisonClass)) { $firstItem.FamilyName } else { $firstItem.ComparisonClass }
             $families.Add([pscustomobject]@{
-                Name = $firstItem.FamilyName
+                Name = $familyName
                 Category = $firstItem.Category
                 CategoryGroup = $firstItem.CategoryGroup
-                Count = $familyItems.Count
-                Items = @($familyItems | Select-Object -First 5 | ForEach-Object { Get-SearchItemView -Record $_ })
+                Count = $family.Group.Count
+                PeerGroups = $peerViews.ToArray()
             })
         }
         $orderedFamilies = @($families |
@@ -625,12 +702,11 @@ function Handle-Request {
         '/styles.css' = 'styles.css'
         '/swiss.css' = 'swiss.css'
         '/app.js' = 'app.js'
-        '/landscape.jpg' = 'landscape.jpg'
         '/landscape-credit.txt' = 'landscape-credit.txt'
     }
     if ($staticFiles.ContainsKey($path)) {
         $file = Join-Path (Join-Path $script:Root 'public') $staticFiles[$path]
-        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/landscape.jpg') { 'image/jpeg' } elseif ($path -eq '/landscape-credit.txt') { 'text/plain; charset=utf-8' } else { 'text/css; charset=utf-8' }
+        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/landscape-credit.txt') { 'text/plain; charset=utf-8' } else { 'text/css; charset=utf-8' }
         $bytes = [System.IO.File]::ReadAllBytes($file)
         Send-Response -Context $Context -StatusCode 200 -ContentType $contentType -Body $bytes
         return
