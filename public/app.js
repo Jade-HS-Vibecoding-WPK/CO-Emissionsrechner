@@ -52,6 +52,91 @@ function ratingBadge(rating) {
   return `<span class="rating-badge">${escapeHtml(group)}${escapeHtml(rank)}</span>`;
 }
 
+function hasUsableRank(item) {
+  const rank = Number(item.Rating?.Rank);
+  const count = Number(item.Rating?.Count);
+  return Number.isFinite(rank) && Number.isFinite(count) && count >= 3 && rank >= 1 && rank <= count;
+}
+
+function compareNames(left, right) {
+  return String(left ?? "").localeCompare(String(right ?? ""), "de", { sensitivity: "base" });
+}
+
+function comparePeerItems(left, right) {
+  const leftRanked = hasUsableRank(left);
+  const rightRanked = hasUsableRank(right);
+  if (leftRanked !== rightRanked) return leftRanked ? -1 : 1;
+  if (leftRanked && rightRanked) {
+    const rankDifference = Number(left.Rating.Rank) - Number(right.Rating.Rank);
+    if (rankDifference) return rankDifference;
+    const gwpDifference = Number(left.Gwp) - Number(right.Gwp);
+    if (Number.isFinite(gwpDifference) && gwpDifference) return gwpDifference;
+  }
+  return compareNames(left.Name, right.Name) ||
+    compareNames(left.Version, right.Version) ||
+    compareNames(left.Id, right.Id);
+}
+
+function peerStatusOrder(status) {
+  return ({
+    ranked: 0,
+    unclassified: 1,
+    expired: 2,
+    "validity-unknown": 3,
+    incomplete: 4,
+  })[status] ?? 4;
+}
+
+function comparePeerGroups(left, right) {
+  return peerStatusOrder(left.Status) - peerStatusOrder(right.Status) ||
+    compareNames(left.ComparisonClass, right.ComparisonClass) ||
+    compareNames(left.Unit, right.Unit) ||
+    compareNames(left.ReferenceAmount, right.ReferenceAmount);
+}
+
+function rankPosition(item) {
+  const rank = Number(item.Rating.Rank);
+  const count = Number(item.Rating.Count);
+  return Math.round(((count - rank) / (count - 1)) * 100);
+}
+
+function rankingText(item) {
+  if (hasUsableRank(item)) {
+    return `Rang ${formatNumber(item.Rating.Rank)} von ${formatNumber(item.Rating.Count)} · ${item.Rating.Group}`;
+  }
+  if (item.Rating?.Group === "nicht unterscheidbar") {
+    return "Nicht unterscheidbar · gleiche GWP-Werte";
+  }
+  return "Nicht klassifiziert · kein belastbarer Rang";
+}
+
+function peerHeading(peer) {
+  if (peer.Status === "ranked") return "Vergleichbare Treffer";
+  if (peer.Status === "unclassified" && peer.RatingGroup === "nicht unterscheidbar") {
+    return "Nicht unterscheidbar · gleiche GWP-Werte";
+  }
+  if (peer.Status === "unclassified") return "Vergleichbar, aber nicht klassifiziert";
+  if (peer.Status === "expired") return "Nicht klassifiziert · Gültigkeit abgelaufen";
+  if (peer.Status === "validity-unknown") return "Nicht klassifiziert · Gültigkeit unbekannt";
+  return "Nicht klassifiziert · Vergleichsdaten fehlen";
+}
+
+function peerDescription(peer) {
+  if (!peer.ComparisonClass || !peer.Unit || !peer.ReferenceAmount) return "";
+  return `${peer.ComparisonClass} · pro ${peer.ReferenceAmount} ${readableText(peer.Unit)}`;
+}
+
+function getPeerGroups(group) {
+  const peerGroups = group.PeerGroups || [{
+    Status: "incomplete",
+    Count: group.Items?.length || 0,
+    Items: group.Items || [],
+  }];
+  return peerGroups
+    .map((peer) => ({ ...peer, Items: [...(peer.Items || [])].sort(comparePeerItems) }))
+    .sort(comparePeerGroups);
+}
+
 async function requestJson(url) {
   const response = await fetch(url);
   const result = await response.json();
@@ -82,17 +167,33 @@ function renderResults(data) {
         <span class="family-count">${group.Count} ${group.Count === 1 ? "Datensatz" : "Datensätze"}</span>
       </header>
       <div class="family-items">
-        ${group.Items.map((item, itemIndex) => `
-          <button class="result-card" type="button" data-group-index="${groupIndex}" data-item-index="${itemIndex}" aria-pressed="false">
-            <span class="result-name">${escapeHtml(item.Name)}</span>
-            <span class="result-bottom">
-              <span class="result-year">${escapeHtml(item.ReferenceYear || "Jahr unbekannt")} · ${item.ReferenceAmount && item.Unit ? `pro ${escapeHtml(item.ReferenceAmount)} ${escapeHtml(readableText(item.Unit))}` : "Bezugsgröße fehlt"}</span>
-              <span class="result-value">${item.Gwp === null ? "Kein GWP-Wert" : `${formatNumber(item.Gwp)} kg CO₂-eq`}</span>
-            </span>
-            <span class="result-rating">${ratingBadge(item.Rating)}</span>
-          </button>
+        ${getPeerGroups(group).map((peer, peerIndex) => `
+          <section class="peer-group">
+            <header class="peer-heading">
+              <div>
+                <h4>${escapeHtml(peerHeading(peer))}</h4>
+                ${peerDescription(peer) ? `<span>${escapeHtml(peerDescription(peer))}</span>` : ""}
+              </div>
+              <span>${formatNumber(peer.Count)} ${peer.Count === 1 ? "Datensatz" : "Datensätze"}</span>
+            </header>
+            ${peer.Items.map((item, itemIndex) => `
+              <button class="result-card" type="button" data-group-index="${groupIndex}" data-peer-index="${peerIndex}" data-item-index="${itemIndex}" aria-pressed="false">
+                <span class="result-name">${escapeHtml(item.Name)}</span>
+                <span class="result-bottom">
+                  <span class="result-year">${escapeHtml(item.ReferenceYear || "Jahr unbekannt")} · ${item.ReferenceAmount && item.Unit ? `pro ${escapeHtml(item.ReferenceAmount)} ${escapeHtml(readableText(item.Unit))}` : "Bezugsgröße fehlt"}</span>
+                  <span class="result-value">${item.Gwp === null ? "Kein GWP-Wert" : `${formatNumber(item.Gwp)} kg CO₂-eq`}</span>
+                </span>
+                <span class="result-ranking">
+                  ${hasUsableRank(item)
+                    ? `<span class="rank-meter" style="--rank-position: ${rankPosition(item)}%" aria-hidden="true"><span></span></span>`
+                    : ""}
+                  <span class="result-ranking-label">${escapeHtml(rankingText(item))}</span>
+                </span>
+              </button>
+            `).join("")}
+            ${peer.Count > peer.Items.length ? `<p class="variant-note">${peer.Items.length} Varianten angezeigt; ${peer.Count - peer.Items.length} weitere Datensätze sind in dieser Vergleichsgruppe enthalten. Verfeinere die Suche für eine bestimmte Produktvariante.</p>` : ""}
+          </section>
         `).join("")}
-        ${group.Count > group.Items.length ? `<p class="variant-note">${group.Items.length} Varianten angezeigt; ${group.Count - group.Items.length} weitere Datensätze sind in dieser Gruppe enthalten. Verfeinere die Suche für eine bestimmte Produktvariante.</p>` : ""}
       </div>
     </section>
   `).join("");
@@ -100,7 +201,8 @@ function renderResults(data) {
   resultsList.querySelectorAll(".result-card").forEach((button) => {
     button.addEventListener("click", () => {
       const group = data.groups[Number(button.dataset.groupIndex)];
-      selectResult(group.Items[Number(button.dataset.itemIndex)], button);
+      const peer = getPeerGroups(group)[Number(button.dataset.peerIndex)];
+      selectResult(peer.Items[Number(button.dataset.itemIndex)], button);
     });
   });
 
