@@ -407,7 +407,9 @@ function renderDetail(data) {
     : data.rating.Group === "nicht unterscheidbar"
       ? "Die GWP-Werte dieser Vergleichsgruppe sind identisch; eine relative Abstufung ist nicht möglich."
       : `Relative Einordnung: ${data.rating.Group} (Rang ${formatNumber(data.rating.Rank)} von ${formatNumber(data.rating.Count)} innerhalb dieser Vergleichsgruppe). Das ist keine absolute Öko-Bewertung.`;
-  const interpretationNote = `${useNote} ${ratingNote} Angezeigt wird nur die Produktionsphase A1–A3, nicht der gesamte Lebenszyklus. Negative CO₂-Werte können biogenen Kohlenstoff im Material abbilden und bedeuten nicht automatisch eine negative Gesamtbilanz.`;
+  const interpretationNote = pagesDemo
+    ? `${useNote} ${ratingNote} Der Beispielwert ist keiner geprüften Lebenszyklusphase oder Norm zugeordnet.`
+    : `${useNote} ${ratingNote} Angezeigt wird nur die Produktionsphase A1–A3, nicht der gesamte Lebenszyklus. Negative CO₂-Werte können biogenen Kohlenstoff im Material abbilden und bedeuten nicht automatisch eine negative Gesamtbilanz.`;
   const hasRank = Number.isFinite(data.rating.Rank) && Number.isFinite(data.rating.Count);
 
   detailPanel.innerHTML = `
