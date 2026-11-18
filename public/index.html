@@ -160,9 +160,14 @@
         <p><strong>ÖKOBAUDAT:</strong> Der aktuelle Release und CSV-Export werden von der offiziellen Downloadseite bezogen; Release, Datenstock-ID, Abrufdatum und Cache-Status bleiben nachvollziehbar. Die ÖKOBAUDAT dokumentiert zusätzlich eine standardisierte Datenaustauschschnittstelle. Deren konkreter Lesezugang ist in dieser App nicht angebunden; verwendet wird der offiziell verlinkte CSV-Download. Niedrigere GWP-Werte werden nur als Datensatzvergleich innerhalb einer vorläufigen Vergleichsgruppe gezeigt. Eine belastbare Materialsubstitution anhand gleichwertiger Bauteilfunktionen ist noch nicht angebunden.</p>
         <p><strong>WECOBIS:</strong> öffentliche Materialinformationen dienen nur als qualitativer Kontext und Quelle für die manuelle Prüfung, nicht als GWP-Faktor. <a href="https://www.wecobis.de/index.php?id=16043" target="_blank" rel="noreferrer">WECOBIS-Baustoffsuche ↗</a></p>
         <p><strong>IBU:</strong> öffentliche EPD-PDF/HTML-Seiten können manuell geprüft werden; sie werden derzeit nicht automatisch numerisch ausgewertet. IBU.data-XML-Downloads mit Registrierung werden nicht verwendet. <a href="https://ibu-epd.com/veroeffentlichte-epds/" target="_blank" rel="noreferrer">Veröffentlichte IBU-EPDs ↗</a></p>
+        <details class="source-status-details">
+          <summary>Weitere angefragte Quellen – derzeit nicht automatisch angebunden</summary>
+          <p>KBOB, eco-bau, IPB, ProBas, Global EPD, ECO EPD, Ecoinvent, GaBi, Climatiq, DEFRA, DGNB Navigator und weitere Herstellerquellen werden hier nicht numerisch ausgewertet. Für diese Quellen wurden schlüsselfreier öffentlicher Zugriff, maschinenlesbares Format sowie Rechte für Abruf, Speicherung und Weitergabe noch nicht einzeln bestätigt. „IPB“ muss außerdem vor einer Prüfung eindeutig identifiziert werden. Es werden weder API-Schlüssel-Dienste noch geschützte oder ungeklärte Daten importiert.</p>
+        </details>
         <p><strong>Allgemeine Websuche:</strong> nicht angebunden, da kein zulässiger öffentlicher Suchendpunkt ohne Login/API-Schlüssel konfiguriert ist. Nicht belegbare Beiträge bleiben in der IFC-Auswertung als fehlend markiert und außerhalb der Teilbilanz.</p>
         <p><strong>BMWSB, BMWE und BMUKN:</strong> noch nicht angebunden. Ergänzende Ökobilanzbelege außerhalb der beschriebenen Quellen werden ebenfalls noch nicht ausgewertet.</p>
-        <p><strong>Knauf, Wienerberger, Bundesverband Ziegel und KS-ORIGINAL:</strong> Produktkataloge sind nicht angebunden und dürfen nur zur Produktidentifikation dienen – nicht als Ökobilanzbeleg.</p>
+        <p><strong>Hersteller- und Verbandsdaten:</strong> Röben, Wieneberger (Schreibweise wie angefragt), Heinze, Bundesverband Ziegel, HARO, Bauwerk, bembé, Boen, Drüsedau, Grunreben, Hain, Trumpf, ter Hürne, Holz Reinlein, Wimmer, Schotten und Hansen, Meisterwerke, Parador, Parkett-Herter, Kährs, Rockwoll (Schreibweise wie angefragt), Würth, CASEA, formula, one Mineral und Knauf sind nicht als separate Herstellerfeeds integriert. In der lokal verfügbaren ÖKOBAUDAT 2024-III wurden über exakte Suchbegriffe Treffer für Wienerberger (1), Meisterwerke (2), Parador (6), ROCKWOOL (13), Würth (5) und Knauf (84) gefunden; dies sind ÖKOBAUDAT-Datensätze, keine neuen Herstellerfeeds. Für die übrigen exakten Suchbegriffe gab es in diesem Datenstand keine Treffer; das belegt nicht, dass die Hersteller selbst keine Daten anbieten. Abweichende Schreibweisen werden nicht automatisch gleichgesetzt. Öffentliche Produktseiten allein belegen weder einen Ökobilanzwert noch Speicher- oder Weitergaberechte.</p>
+        <p><strong>Lokale Datenimporte:</strong> Im lokalen App-Backend können geprüfte UTF-8-CSV-Datensätze nach Vorschau und expliziter Rechtebestätigung gespeichert werden. Quelle, Produkt, Version, GWP-Norm, Module, Einheit, Bezugsmenge, Gültigkeit und Lizenzhinweis bleiben je Datensatz erhalten. Die Nutzerbestätigung wird nicht als unabhängige Lizenzprüfung ausgegeben. GitHub Pages stellt weder Upload noch lokale Datenbank bereit.</p>
         <a href="https://www.oekobaudat.de/service/downloads.html" target="_blank" rel="noreferrer">ÖKOBAUDAT: Daten und Schnittstellen <span aria-hidden="true">↗</span></a>
         <div class="catalog-links" aria-label="Nicht angebundene Produktkataloge">
           <a href="https://knauf.com/de-DE/p/produkte" target="_blank" rel="noreferrer">Knauf ↗</a>
@@ -171,6 +176,38 @@
           <a href="https://www.ks-original.de/kalksandstein/produkte" target="_blank" rel="noreferrer">KS-ORIGINAL ↗</a>
         </div>
       </div>
+    </section>
+
+    <section id="local-import" class="user-import card" aria-labelledby="local-import-title" hidden>
+      <div class="user-import-heading">
+        <div>
+          <span class="step-label">LOKALE DATENBANK</span>
+          <h2 id="local-import-title">Eigene Materialdaten hinzufügen</h2>
+          <p>Nur Daten importieren, die du rechtmäßig lokal speichern und in Berechnungen verwenden darfst. Rechte und Herkunft werden vom Importierenden angegeben, aber nicht unabhängig geprüft. Die Datei bleibt auf diesem Computer.</p>
+        </div>
+      </div>
+      <div class="user-import-controls">
+        <label class="file-picker" for="user-import-file"><span aria-hidden="true">↑</span><strong>UTF-8-CSV auswählen</strong><input id="user-import-file" type="file" accept=".csv,text/csv"></label>
+        <button id="user-import-template" class="secondary-button" type="button">CSV-Vorlage herunterladen</button>
+        <span class="user-import-limit">Max. 5 MiB / 10.000 Zeilen · lokal max. 25.000 Datensätze</span>
+      </div>
+      <div id="user-import-status" class="user-import-status" role="status" aria-live="polite" hidden></div>
+      <div id="user-import-preview" class="user-import-preview" aria-labelledby="user-import-preview-title" hidden>
+        <h3 id="user-import-preview-title">Importvorschau</h3>
+        <p id="user-import-summary"></p>
+        <ul id="user-import-errors" class="user-import-errors"></ul>
+        <ul id="user-import-samples" class="user-import-samples"></ul>
+        <label class="user-import-rights"><input id="user-import-rights" type="checkbox"> Ich bestätige, dass ich diese Daten rechtmäßig lokal speichern und für die Materialsuche sowie IFC-Berechnung verwenden darf.</label>
+        <div class="user-import-actions">
+          <button id="user-import-confirm" class="search-button" type="button" disabled><span>Gültige Datensätze übernehmen</span></button>
+          <button id="user-import-discard" class="secondary-button" type="button">Vorschau verwerfen</button>
+        </div>
+      </div>
+      <div id="user-import-batches" class="user-import-batches" aria-labelledby="user-import-batches-title" hidden>
+        <h3 id="user-import-batches-title">Lokale Imports</h3>
+        <ul id="user-import-batch-list"></ul>
+      </div>
+      <p class="user-import-format">Vorlage: SourceName, SourceRecordId, Version, ProductName, Category, Unit, ReferenceAmount, GwpKgCO2e, Standard, Modules, ValidUntil, SourceUrl, LicenseNotice, SolarReflectancePercent, SolarReflectanceMethod, SolarReflectanceWavelength. GWP ist nur für EN 15804+A2 / A1-A3 zulässig. Solarreflexion ist unabhängig und braucht Messmethode sowie Wellenlängenbereich. Ungültige, abgelaufene oder widersprüchliche Werte werden nicht still in Berechnungen aufgenommen.</p>
     </section>
 
     <footer>

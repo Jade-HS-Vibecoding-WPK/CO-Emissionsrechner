@@ -12,6 +12,18 @@ $script:CacheMetadataFile = Join-Path $script:CacheDirectory 'oekobaudat.metadat
 $script:ReleasePageUrl = 'https://www.oekobaudat.de/service/downloads.html'
 $script:DataSource = 'OEKOBAUDAT-CSV-Export, EN 15804+A2, Modul A1-A3'
 $script:Dataset = $null
+$script:UserImportRecords = @()
+$script:UserImportBatches = @()
+$script:UserImportStateLoaded = $false
+$script:PendingUserImports = @{}
+$script:CombinedCatalogIndex = $null
+$script:UserImportStoreFile = Join-Path $script:CacheDirectory 'user-imports.json'
+$script:UserImportMaxBytes = 5 * 1024 * 1024
+$script:UserImportMaxRows = 10000
+$script:UserImportMaxStoredRecords = 25000
+$script:UserImportMaxStoreBytes = 25 * 1024 * 1024
+$script:UserImportLicenseStatus = 'user-attested-not-independently-verified'
+$script:UserImportUsageNotice = 'Benutzerimport: Quelle und Nutzungsrechte wurden vom Importierenden angegeben, aber nicht unabhängig geprüft.'
 $script:RetrievedAt = $null
 $script:DataWarning = $null
 $script:SourceMetadata = $null
@@ -36,6 +48,14 @@ $script:MaterialAliasGroups = @(
     @('Aluminium', 'aluminum', 'aluminium'),
     @('Glas', 'glass'),
     @('Holz', 'timber', 'wood')
+)
+$script:ManufacturerQueryTerms = @(
+    'Röben', 'Wieneberger', 'Wienerberger', 'Heinze', 'Bundesverband Ziegel',
+    'Haro', 'HARO', 'Bauwerk', 'bembé', 'Boen', 'Drüsedau', 'Grunreben',
+    'Hain', 'Trumpf', 'ter Hürne', 'Holz Reinlein', 'Wimmer',
+    'Schotten und Hansen', 'Meisterwerke', 'MeisterWerke', 'Parador',
+    'Parkett-Herter', 'Kährs', 'Rockwoll', 'ROCKWOOL', 'Würth',
+    'Casea', 'formula', 'one Mineral', 'Knauf'
 )
 
 function Send-Response {
@@ -65,6 +85,65 @@ function Send-Json {
     $json = ConvertTo-Json -InputObject $Value -Depth 8 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     Send-Response -Context $Context -StatusCode $StatusCode -ContentType 'application/json; charset=utf-8' -Body $bytes
+}
+
+function Assert-SameOriginImportRequest {
+    param([System.Net.HttpListenerContext]$Context)
+
+    $origin = $Context.Request.Headers['Origin']
+    if ([string]::IsNullOrWhiteSpace($origin)) {
+        return
+    }
+    $originUri = $null
+    if (-not [uri]::TryCreate($origin, [System.UriKind]::Absolute, [ref]$originUri)) {
+        throw 'Ungültiger Origin-Header.'
+    }
+    $requestUri = $Context.Request.Url
+    if ($originUri.Scheme -ne $requestUri.Scheme -or
+        $originUri.Host -ne $requestUri.Host -or
+        $originUri.Port -ne $requestUri.Port) {
+        throw 'Importe sind nur über denselben App-Ursprung zulässig.'
+    }
+}
+
+function Read-BoundedRequestBytes {
+    param(
+        [System.Net.HttpListenerRequest]$Request,
+        [long]$MaximumBytes
+    )
+
+    if ($Request.ContentLength64 -gt $MaximumBytes) {
+        $exception = [System.IO.InvalidDataException]::new('Die Anfrage überschreitet das Größenlimit.')
+        $exception.Data['StatusCode'] = 413
+        throw $exception
+    }
+    $memory = [System.IO.MemoryStream]::new()
+    $buffer = [byte[]]::new(8192)
+    try {
+        while (($read = $Request.InputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            if ($memory.Length + $read -gt $MaximumBytes) {
+                $exception = [System.IO.InvalidDataException]::new('Die Anfrage überschreitet das Größenlimit.')
+                $exception.Data['StatusCode'] = 413
+                throw $exception
+            }
+            $memory.Write($buffer, 0, $read)
+        }
+        return ,$memory.ToArray()
+    }
+    finally {
+        $memory.Dispose()
+    }
+}
+
+function Read-StrictUtf8RequestText {
+    param(
+        [System.Net.HttpListenerRequest]$Request,
+        [long]$MaximumBytes
+    )
+
+    $bytes = Read-BoundedRequestBytes -Request $Request -MaximumBytes $MaximumBytes
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    return $utf8.GetString($bytes)
 }
 
 function Get-Field {
@@ -126,6 +205,9 @@ function Get-MaterialQueryTerms {
         $terms.Add($original)
         [void]$seen.Add((Normalize-MaterialSearchText -Value $original))
     }
+    if ($script:ManufacturerQueryTerms -contains $original) {
+        return $terms.ToArray()
+    }
 
     foreach ($group in $script:MaterialAliasGroups) {
         $groupMatches = $false
@@ -151,6 +233,28 @@ function Get-MaterialQueryTerms {
     }
 
     return $terms.ToArray()
+}
+
+function Test-MaterialSearchTerm {
+    param(
+        [string]$Name,
+        [string]$Category,
+        [string]$Owner,
+        [string]$Term
+    )
+
+    if ($script:ManufacturerQueryTerms -contains $Term) {
+        $pattern = '(?<![\p{L}\p{N}])' + [regex]::Escape($Term) + '(?![\p{L}\p{N}])'
+        return [regex]::IsMatch("$Name $Category $Owner", $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    }
+
+    if ($Name.IndexOf($Term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $Category.IndexOf($Term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        return $true
+    }
+
+    $ownerPattern = '(?<![\p{L}\p{N}])' + [regex]::Escape($Term) + '(?![\p{L}\p{N}])'
+    return [regex]::IsMatch($Owner, $ownerPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 
 function Get-SearchTermPriority {
@@ -182,8 +286,7 @@ function Get-RecordMatchedTerms {
     )
 
     return @($QueryTerms | Where-Object {
-        $Record.Name.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $Record.Category.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        Test-MaterialSearchTerm -Name ([string]$Record.Name) -Category ([string]$Record.Category) -Owner ([string]$Record.Owner) -Term $_
     })
 }
 
@@ -196,6 +299,7 @@ function Build-MaterialCatalogIndex {
             Record = $record
             Name = [string]$record.Name
             Category = [string]$record.Category
+            Owner = [string]$record.Owner
         })
     }
 
@@ -209,8 +313,7 @@ function Get-IndexedRecordMatchedTerms {
     )
 
     return @($QueryTerms | Where-Object {
-        $Entry.Name.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $Entry.Category.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        Test-MaterialSearchTerm -Name $Entry.Name -Category $Entry.Category -Owner $Entry.Owner -Term $_
     })
 }
 
@@ -440,6 +543,7 @@ function Write-CatalogManifest {
 }
 
 function Get-SourceProvenance {
+    Ensure-UserImportState
     $metadata = $script:SourceMetadata
     $catalogManifest = $script:CatalogManifest
     return [pscustomobject]@{
@@ -460,6 +564,10 @@ function Get-SourceProvenance {
         catalogManifest = 'local-app-data/catalog/manifest.json'
         licenseStatus = $script:CatalogLicenseStatus
         usageNotice = $script:CatalogUsageNotice
+        userImportRecordCount = @($script:UserImportRecords).Count
+        userImportBatchCount = @($script:UserImportBatches).Count
+        userImportLicenseStatus = $script:UserImportLicenseStatus
+        userImportUsageNotice = $script:UserImportUsageNotice
     }
 }
 
@@ -643,6 +751,510 @@ function Get-CategoryGroupName {
     return [string]$Category
 }
 
+function Get-UserImportKey {
+    param([object]$Record)
+    return ('{0}|{1}|{2}' -f [string]$Record.SourceName, [string]$Record.SourceRecordId, [string]$Record.Version).ToLowerInvariant()
+}
+
+function Get-UserImportFingerprint {
+    param([object]$Record)
+
+    $values = @(
+        [string]$Record.SourceName, [string]$Record.SourceRecordId, [string]$Record.Version,
+        [string]$Record.ProductName, [string]$Record.Category, [string]$Record.Unit,
+        [string]$Record.ReferenceAmount, [string]$Record.Gwp, [string]$Record.Standard,
+        [string]$Record.Modules, [string]$Record.ValidUntil, [string]$Record.SourceUrl,
+        [string]$Record.LicenseNotice, [string]$Record.SolarReflectance.Value,
+        [string]$Record.SolarReflectance.Method, [string]$Record.SolarReflectance.Wavelength
+    )
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($values -join "`n"))
+    $hash = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($hash.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $hash.Dispose()
+    }
+}
+
+function Ensure-UserImportState {
+    if ($script:UserImportStateLoaded) {
+        return
+    }
+
+    $script:UserImportBatches = @()
+    $script:UserImportRecords = @()
+    if (Test-Path -LiteralPath $script:UserImportStoreFile) {
+        if ((Get-Item -LiteralPath $script:UserImportStoreFile).Length -gt $script:UserImportMaxStoreBytes) {
+            throw 'Der lokale Import-Speicher überschreitet das zulässige Größenlimit.'
+        }
+        $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $storeText = [System.IO.File]::ReadAllText($script:UserImportStoreFile, $strictUtf8)
+        $store = ConvertFrom-Json -InputObject $storeText -ErrorAction Stop
+        if ($store.SchemaVersion -ne 1 -or $null -eq $store.Batches) {
+            throw 'Der lokale Benutzerimport-Speicher hat ein unbekanntes Format.'
+        }
+        $script:UserImportBatches = @($store.Batches)
+        foreach ($batch in $script:UserImportBatches) {
+            foreach ($record in @($batch.Records)) {
+                $script:UserImportRecords += $record
+            }
+        }
+        if (@($script:UserImportRecords).Count -gt $script:UserImportMaxStoredRecords) {
+            throw 'Der lokale Import-Speicher überschreitet das zulässige Datensatzlimit.'
+        }
+    }
+
+    $script:UserImportStateLoaded = $true
+}
+
+function Save-UserImportState {
+    param([object[]]$Batches)
+
+    if (-not (Test-Path -LiteralPath $script:CacheDirectory)) {
+        New-Item -ItemType Directory -Path $script:CacheDirectory -Force | Out-Null
+    }
+    $store = [pscustomobject]@{
+        SchemaVersion = 1
+        Batches = @($Batches)
+    }
+    $json = ConvertTo-Json -InputObject $store -Depth 20
+    $encoding = [System.Text.UTF8Encoding]::new($false)
+    $bytes = $encoding.GetBytes($json)
+    if ($bytes.Length -gt $script:UserImportMaxStoreBytes) {
+        throw 'Der lokale Import-Speicher hat sein Größenlimit erreicht. Entferne zuerst einen Import.'
+    }
+
+    $temporaryFile = Join-Path $script:CacheDirectory ("user-imports.{0}.tmp" -f [guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.File]::WriteAllBytes($temporaryFile, $bytes)
+        Move-FileAtomically -Source $temporaryFile -Destination $script:UserImportStoreFile
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryFile) {
+            Remove-Item -LiteralPath $temporaryFile -Force
+        }
+    }
+
+    $script:UserImportBatches = @($Batches)
+    $script:UserImportRecords = @()
+    foreach ($batch in $script:UserImportBatches) {
+        foreach ($record in @($batch.Records)) {
+            $script:UserImportRecords += $record
+        }
+    }
+    $script:UserImportStateLoaded = $true
+    $script:CombinedCatalogIndex = $null
+}
+
+function ConvertFrom-UserCatalogCsv {
+    param([Parameter(Mandatory)][string]$Text)
+
+    $expectedHeaders = @(
+        'SourceName', 'SourceRecordId', 'Version', 'ProductName', 'Category',
+        'Unit', 'ReferenceAmount', 'GwpKgCO2e', 'Standard', 'Modules',
+        'ValidUntil', 'SourceUrl', 'LicenseNotice', 'SolarReflectancePercent',
+        'SolarReflectanceMethod', 'SolarReflectanceWavelength'
+    )
+    $reader = [System.IO.StringReader]::new($Text)
+    $parser = [Microsoft.VisualBasic.FileIO.TextFieldParser]::new($reader)
+    $records = [System.Collections.Generic.List[object]]::new()
+    $errors = [System.Collections.Generic.List[object]]::new()
+    $dataRowCount = 0
+    try {
+        $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
+        $parser.SetDelimiters(',')
+        $parser.HasFieldsEnclosedInQuotes = $true
+        $parser.TrimWhiteSpace = $false
+        if ($parser.EndOfData) {
+            throw 'Die CSV-Datei ist leer.'
+        }
+        $headers = @($parser.ReadFields())
+        if ($headers.Length -gt 0) {
+            $headers[0] = $headers[0].TrimStart([char]0xFEFF)
+        }
+        $headers = @($headers | ForEach-Object { ([string]$_).Trim() })
+        if (($headers -join '|') -cne ($expectedHeaders -join '|')) {
+            throw ("Die CSV-Kopfzeile muss exakt lauten: {0}" -f ($expectedHeaders -join ','))
+        }
+
+        $rowNumber = 1
+        while (-not $parser.EndOfData) {
+            $rowNumber++
+            $dataRowCount++
+            $fields = @($parser.ReadFields())
+            if ($fields.Length -ne $expectedHeaders.Length) {
+                $errors.Add([pscustomobject]@{ row = $rowNumber; field = ''; message = 'Die Zeile hat eine andere Spaltenzahl als die Kopfzeile.' })
+                continue
+            }
+            $values = @{}
+            for ($index = 0; $index -lt $expectedHeaders.Length; $index++) {
+                $values[$expectedHeaders[$index]] = ([string]$fields[$index]).Trim()
+                if ($values[$expectedHeaders[$index]].Length -gt 256) {
+                    $errors.Add([pscustomobject]@{
+                        row = $rowNumber
+                        field = $expectedHeaders[$index]
+                        message = 'CSV-Felder dürfen höchstens 256 Zeichen enthalten.'
+                    })
+                }
+            }
+            if (@($errors | Where-Object { $_.row -eq $rowNumber }).Count -gt 0) {
+                continue
+            }
+
+            $rowIssues = [System.Collections.Generic.List[object]]::new()
+            foreach ($fieldName in @('SourceName', 'SourceRecordId', 'Version', 'ProductName', 'Category', 'SourceUrl', 'LicenseNotice')) {
+                if ([string]::IsNullOrWhiteSpace($values[$fieldName])) {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = $fieldName; message = 'Pflichtfeld darf nicht leer sein.' })
+                }
+                elseif ($values[$fieldName].Length -gt 256) {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = $fieldName; message = 'Textfeld darf höchstens 256 Zeichen enthalten.' })
+                }
+                elseif ($values[$fieldName] -match '^[=+@]') {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = $fieldName; message = 'Tabellenformelartige Texteingabe ist nicht zulässig.' })
+                }
+            }
+
+            $sourceUri = $null
+            if (-not [string]::IsNullOrWhiteSpace($values.SourceUrl) -and
+                (-not [uri]::TryCreate($values.SourceUrl, [System.UriKind]::Absolute, [ref]$sourceUri) -or $sourceUri.Scheme -ne 'https')) {
+                $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'SourceUrl'; message = 'Die Quelle muss eine absolute HTTPS-Adresse sein.' })
+            }
+
+            $gwp = $null
+            $hasGwpData = @('Unit', 'ReferenceAmount', 'GwpKgCO2e', 'Standard', 'Modules', 'ValidUntil') |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($values[$_]) }
+            $gwpComplete = $hasGwpData.Count -eq 6
+            if ($hasGwpData.Count -gt 0 -and -not $gwpComplete) {
+                $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'GwpKgCO2e'; message = 'GWP-Felder müssen vollständig ausgefüllt werden.' })
+            }
+            if ($gwpComplete) {
+                $number = 0.0
+                if (-not [double]::TryParse($values.GwpKgCO2e, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$number) -or [double]::IsNaN($number) -or [double]::IsInfinity($number)) {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'GwpKgCO2e'; message = 'GWP muss eine endliche Zahl in kg CO2e sein.' })
+                }
+                else {
+                    $gwp = $number
+                }
+                $referenceAmount = 0.0
+                if (-not [double]::TryParse($values.ReferenceAmount, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$referenceAmount) -or $referenceAmount -le 0 -or [double]::IsNaN($referenceAmount) -or [double]::IsInfinity($referenceAmount)) {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'ReferenceAmount'; message = 'Bezugsmenge muss eine endliche Zahl größer als null sein.' })
+                }
+                if (@('m', 'cm', 'mm', 'm2', 'cm2', 'mm2', 'm3', 'l', 'kg', 'g', 't', 'st', 'stk') -notcontains $values.Unit.ToLowerInvariant()) {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'Unit'; message = 'Einheit wird nicht unterstützt; zulässig sind m, cm, mm, m2, cm2, mm2, m3, l, kg, g, t und st.' })
+                }
+                if ($values.Standard -cne 'EN 15804+A2' -or $values.Modules -cne 'A1-A3') {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'Standard'; message = 'Für GWP-Berechnungen werden ausschließlich EN 15804+A2 und Module A1-A3 akzeptiert.' })
+                }
+                if ($values.ValidUntil -notmatch '^\d{4}$' -or [int]$values.ValidUntil -lt 1900) {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'ValidUntil'; message = 'Gültig-bis muss ein vierstelliges Jahr sein.' })
+                }
+            }
+
+            $solar = $null
+            $solarFields = @('SolarReflectancePercent', 'SolarReflectanceMethod', 'SolarReflectanceWavelength')
+            $hasSolarData = @($solarFields | Where-Object { -not [string]::IsNullOrWhiteSpace($values[$_]) })
+            if ($hasSolarData.Count -gt 0 -and $hasSolarData.Count -ne $solarFields.Count) {
+                $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'SolarReflectancePercent'; message = 'Solarreflexion benötigt Wert, Messmethode und Wellenlängenbereich.' })
+            }
+            elseif ($hasSolarData.Count -eq $solarFields.Count) {
+                $reflectance = 0.0
+                if (-not [double]::TryParse($values.SolarReflectancePercent, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$reflectance) -or $reflectance -lt 0 -or $reflectance -gt 100 -or [double]::IsNaN($reflectance) -or [double]::IsInfinity($reflectance)) {
+                    $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'SolarReflectancePercent'; message = 'Solarreflexion muss ein Zahlenwert zwischen 0 und 100 Prozent sein.' })
+                }
+                else {
+                    $solar = [pscustomobject]@{
+                        Value = $reflectance
+                        Unit = '%'
+                        Method = $values.SolarReflectanceMethod
+                        Wavelength = $values.SolarReflectanceWavelength
+                        SourceName = $values.SourceName
+                        SourceUrl = $values.SourceUrl
+                    }
+                }
+            }
+            if (-not $gwpComplete -and $null -eq $solar) {
+                $rowIssues.Add([pscustomobject]@{ row = $rowNumber; field = 'GwpKgCO2e'; message = 'Mindestens vollständige GWP-Daten oder vollständige Solarreflexionsdaten angeben.' })
+            }
+            foreach ($issue in $rowIssues) {
+                $errors.Add($issue)
+            }
+            if ($rowIssues.Count -gt 0) {
+                continue
+            }
+
+            $validUntil = if ($gwpComplete) { $values.ValidUntil } else { '' }
+            $validity = if (-not $gwpComplete) { 'unknown' } elseif ([int]$validUntil -lt [DateTime]::UtcNow.Year) { 'expired' } else { 'valid' }
+            $records.Add([pscustomobject]@{
+                Row = $rowNumber
+                SourceName = $values.SourceName
+                SourceRecordId = $values.SourceRecordId
+                Version = $values.Version
+                ProductName = $values.ProductName
+                Category = $values.Category
+                Unit = if ($gwpComplete) { $values.Unit } else { '' }
+                ReferenceAmount = if ($gwpComplete) { $values.ReferenceAmount } else { '' }
+                Gwp = $gwp
+                Standard = if ($gwpComplete) { $values.Standard } else { '' }
+                Modules = if ($gwpComplete) { $values.Modules } else { '' }
+                ValidUntil = $validUntil
+                Validity = $validity
+                SourceUrl = $values.SourceUrl
+                LicenseNotice = $values.LicenseNotice
+                SolarReflectance = $solar
+            })
+        }
+    }
+    finally {
+        $parser.Dispose()
+        $reader.Dispose()
+    }
+
+    if ($dataRowCount -gt $script:UserImportMaxRows) {
+        throw "Die CSV-Datei überschreitet das Limit von $($script:UserImportMaxRows) Datenzeilen."
+    }
+    return [pscustomobject]@{ Records = $records.ToArray(); Errors = $errors.ToArray(); RowCount = $dataRowCount }
+}
+
+function ConvertTo-UserImportRecord {
+    param(
+        [object]$Record,
+        [string]$BatchId,
+        [int]$RecordNumber,
+        [string]$ImportedAt
+    )
+
+    return [pscustomobject]@{
+        Id = "USER-$BatchId-$RecordNumber"
+        Version = $Record.Version
+        Name = $Record.ProductName
+        FamilyName = $Record.ProductName
+        ComparisonClass = $Record.ProductName
+        Category = $Record.Category
+        CategoryGroup = Get-CategoryGroupName -Category $Record.Category
+        Unit = $Record.Unit
+        ReferenceAmount = $Record.ReferenceAmount
+        Gwp = $Record.Gwp
+        Owner = $Record.SourceName
+        ReferenceYear = $null
+        ValidUntil = $Record.ValidUntil
+        Validity = $Record.Validity
+        RatingGroup = 'nicht bewertet'
+        RatingRank = $null
+        RatingCount = 0
+        Registration = $Record.SourceRecordId
+        Url = $Record.SourceUrl
+        SourceName = $Record.SourceName
+        SourceUrl = $Record.SourceUrl
+        RecordKind = 'user-import'
+        SourceRecordId = $Record.SourceRecordId
+        GwpStandard = $Record.Standard
+        GwpModules = $Record.Modules
+        LicenseStatus = $script:UserImportLicenseStatus
+        LicenseNotice = $Record.LicenseNotice
+        SolarReflectance = $Record.SolarReflectance
+        UserImportBatchId = $BatchId
+        DataStockId = $Record.SourceRecordId
+        DataStockVersion = $Record.Version
+        RetrievedAt = $ImportedAt
+        CacheStatus = 'local-user-import'
+        Metrics = @()
+        SourceNameKey = $Record.SourceName
+        ProductName = $Record.ProductName
+        Standard = $Record.Standard
+        Modules = $Record.Modules
+        ValidUntilYear = $Record.ValidUntil
+        LicenseNoticeOriginal = $Record.LicenseNotice
+    }
+}
+
+function New-UserImportPreview {
+    param([Parameter(Mandatory)][string]$CsvText)
+
+    Ensure-UserImportState
+    foreach ($pendingId in @($script:PendingUserImports.Keys)) {
+        if ([DateTime]::UtcNow - $script:PendingUserImports[$pendingId].CreatedAt -gt [TimeSpan]::FromMinutes(30)) {
+            $script:PendingUserImports.Remove($pendingId)
+        }
+    }
+    if ($script:PendingUserImports.Count -ge 10) {
+        throw 'Es sind bereits zehn Importvorschauen offen. Bitte bestätige oder verwerfe eine Vorschau.'
+    }
+    $parsed = ConvertFrom-UserCatalogCsv -Text $CsvText
+    $errors = [System.Collections.Generic.List[object]]::new()
+    foreach ($errorItem in @($parsed.Errors)) {
+        $errors.Add($errorItem)
+    }
+    $accepted = [System.Collections.Generic.List[object]]::new()
+    $duplicateRows = 0
+    $existingByKey = @{}
+    foreach ($existing in @($script:UserImportRecords)) {
+        $key = Get-UserImportKey -Record $existing
+        if (-not $existingByKey.ContainsKey($key)) {
+            $existingByKey[$key] = [System.Collections.Generic.List[string]]::new()
+        }
+        $existingByKey[$key].Add((Get-UserImportFingerprint -Record $existing))
+    }
+
+    foreach ($group in @($parsed.Records | Group-Object -Property { Get-UserImportKey -Record $_ })) {
+        $items = @($group.Group)
+        $fingerprints = @($items | ForEach-Object { Get-UserImportFingerprint -Record $_ } | Select-Object -Unique)
+        if ($existingByKey.ContainsKey($group.Name)) {
+            foreach ($item in $items) {
+                if ($existingByKey[$group.Name].Contains((Get-UserImportFingerprint -Record $item))) {
+                    $duplicateRows++
+                }
+                else {
+                    $errors.Add([pscustomobject]@{
+                        row = $item.Row
+                        field = 'SourceRecordId'
+                        message = 'Diese Quellen-ID und Version existiert bereits mit abweichenden Inhalten. Der Konflikt wurde nicht importiert.'
+                    })
+                }
+            }
+            continue
+        }
+        if ($fingerprints.Count -gt 1) {
+            foreach ($item in $items) {
+                $errors.Add([pscustomobject]@{
+                    row = $item.Row
+                    field = 'SourceRecordId'
+                    message = 'Dieselbe Quellen-ID und Version kommt in der Datei mit unterschiedlichen Inhalten vor.'
+                })
+            }
+            continue
+        }
+        $accepted.Add($items[0])
+        $duplicateRows += [Math]::Max(0, $items.Count - 1)
+    }
+
+    $previewId = [guid]::NewGuid().ToString('N')
+    $script:PendingUserImports[$previewId] = @{
+        CreatedAt = [DateTime]::UtcNow
+        Records = $accepted.ToArray()
+    }
+    $errorRows = @($errors | Select-Object -ExpandProperty row -Unique).Count
+    return [pscustomobject]@{
+        previewId = $previewId
+        rowCount = $parsed.RowCount
+        validRowCount = $accepted.Count
+        duplicateRowCount = $duplicateRows
+        errorRowCount = $errorRows
+        errors = @($errors | Select-Object -First 100)
+        samples = @($accepted | Select-Object -First 8 | ForEach-Object {
+            [pscustomobject]@{
+                productName = $_.ProductName
+                sourceName = $_.SourceName
+                sourceRecordId = $_.SourceRecordId
+                gwpAvailable = ($null -ne $_.Gwp)
+                solarReflectanceAvailable = ($null -ne $_.SolarReflectance)
+            }
+        })
+    }
+}
+
+function Confirm-UserImport {
+    param(
+        [Parameter(Mandatory)][string]$PreviewId,
+        [bool]$RightsConfirmed
+    )
+
+    if (-not $RightsConfirmed) {
+        throw 'Bitte bestätige, dass du diese Daten rechtmäßig lokal speichern und verwenden darfst.'
+    }
+    if (-not $script:PendingUserImports.ContainsKey($PreviewId)) {
+        throw 'Die Importvorschau ist abgelaufen. Bitte lade die CSV-Datei erneut hoch.'
+    }
+    $preview = $script:PendingUserImports[$PreviewId]
+    if ([DateTime]::UtcNow - $preview.CreatedAt -gt [TimeSpan]::FromMinutes(30)) {
+        $script:PendingUserImports.Remove($PreviewId)
+        throw 'Die Importvorschau ist abgelaufen. Bitte lade die CSV-Datei erneut hoch.'
+    }
+    Ensure-UserImportState
+    $currentKeys = @{}
+    foreach ($record in @($script:UserImportRecords)) {
+        $key = Get-UserImportKey -Record $record
+        if (-not $currentKeys.ContainsKey($key)) {
+            $currentKeys[$key] = [System.Collections.Generic.List[string]]::new()
+        }
+        $currentKeys[$key].Add((Get-UserImportFingerprint -Record $record))
+    }
+
+    $batchId = [guid]::NewGuid().ToString('N')
+    $importedAt = [DateTime]::UtcNow.ToString('o')
+    $records = [System.Collections.Generic.List[object]]::new()
+    foreach ($record in @($preview.Records)) {
+        $key = Get-UserImportKey -Record $record
+        $fingerprint = Get-UserImportFingerprint -Record $record
+        if ($currentKeys.ContainsKey($key)) {
+            if ($currentKeys[$key].Contains($fingerprint)) {
+                continue
+            }
+            throw 'Der Importkonflikt hat sich seit der Vorschau geändert. Bitte erstelle eine neue Vorschau.'
+        }
+        $records.Add((ConvertTo-UserImportRecord -Record $record -BatchId $batchId -RecordNumber ($records.Count + 1) -ImportedAt $importedAt))
+        $currentKeys[$key] = [System.Collections.Generic.List[string]]::new()
+        $currentKeys[$key].Add($fingerprint)
+    }
+    if ($records.Count -eq 0) {
+        throw 'Es gibt keine neuen, gültigen Datensätze zu importieren.'
+    }
+    if (@($script:UserImportRecords).Count + $records.Count -gt $script:UserImportMaxStoredRecords) {
+        throw "Der lokale Import-Speicher ist auf $($script:UserImportMaxStoredRecords) Datensätze begrenzt."
+    }
+    $batch = [pscustomobject]@{
+        Id = $batchId
+        ImportedAt = $importedAt
+        RightsConfirmedAt = $importedAt
+        SourceNames = @($records | Select-Object -ExpandProperty SourceName -Unique)
+        RecordCount = $records.Count
+        Records = $records.ToArray()
+    }
+    $nextBatches = @($script:UserImportBatches) + @($batch)
+    Save-UserImportState -Batches $nextBatches
+    $script:PendingUserImports.Remove($PreviewId)
+    return [pscustomobject]@{
+        batchId = $batchId
+        importedRecordCount = $records.Count
+        importedAt = $importedAt
+        sourceNames = $batch.SourceNames
+    }
+}
+
+function Remove-UserImportBatch {
+    param([Parameter(Mandatory)][string]$BatchId)
+
+    Ensure-UserImportState
+    $remaining = @($script:UserImportBatches | Where-Object { $_.Id -ne $BatchId })
+    if ($remaining.Count -eq @($script:UserImportBatches).Count) {
+        return $false
+    }
+    Save-UserImportState -Batches $remaining
+    return $true
+}
+
+function Get-UserImportBatchSummary {
+    Ensure-UserImportState
+    return @($script:UserImportBatches | ForEach-Object {
+        [pscustomobject]@{
+            id = $_.Id
+            importedAt = $_.ImportedAt
+            sourceNames = @($_.SourceNames)
+            recordCount = [int]$_.RecordCount
+            licenseStatus = $script:UserImportLicenseStatus
+        }
+    })
+}
+
+function Remove-PendingUserImport {
+    param([Parameter(Mandatory)][string]$PreviewId)
+    if (-not $script:PendingUserImports.ContainsKey($PreviewId)) {
+        return $false
+    }
+    $script:PendingUserImports.Remove($PreviewId)
+    return $true
+}
+
 function Ensure-Dataset {
     if ($null -ne $script:Dataset -and $null -ne $script:CatalogIndex) {
         return
@@ -657,7 +1269,7 @@ function Ensure-Dataset {
     $officialExport = $null
     $releasePageError = $null
     try {
-        $releasePage = Invoke-WebRequest -Uri $script:ReleasePageUrl -UseBasicParsing
+        $releasePage = Invoke-WebRequest -Uri $script:ReleasePageUrl -UseBasicParsing -TimeoutSec 15
         $officialExport = Get-OfficialExportInfo -Html $releasePage.Content
     }
     catch {
@@ -680,7 +1292,7 @@ function Ensure-Dataset {
         $downloadFile = "$($script:CacheFile).download"
         try {
             Write-Host ("Lade ÖKOBAUDAT {0} über den offiziell verlinkten CSV-Export ..." -f $officialExport.Release)
-            Invoke-WebRequest -Uri $officialExport.DownloadUrl -OutFile $downloadFile -UseBasicParsing
+            Invoke-WebRequest -Uri $officialExport.DownloadUrl -OutFile $downloadFile -UseBasicParsing -TimeoutSec 60
             [void](Test-OekoCsvFile -Path $downloadFile)
             Move-FileAtomically -Source $downloadFile -Destination $script:CacheFile
 
@@ -910,6 +1522,42 @@ function Ensure-Dataset {
     Write-Host ("OEKOBAUDAT-Katalog bereit: {0} Datensaetze; Quellenindex im Arbeitsspeicher." -f $script:Dataset.Length)
 }
 
+function Get-SearchableCatalog {
+    Ensure-UserImportState
+    if ($script:DataWarning -like 'ÖKOBAUDAT ist momentan nicht verfügbar; es werden nur lokale Benutzerimporte durchsucht.*') {
+        $script:DataWarning = $null
+    }
+    try {
+        Ensure-Dataset
+    }
+    catch {
+        if (@($script:UserImportRecords).Count -eq 0) {
+            throw
+        }
+        $script:DataWarning = "ÖKOBAUDAT ist momentan nicht verfügbar; es werden nur lokale Benutzerimporte durchsucht. $($_.Exception.Message)"
+        $script:CatalogStatus = 'user-imports-only'
+        $script:CacheStatus = 'unavailable'
+    }
+
+    $records = [System.Collections.Generic.List[object]]::new()
+    if ($null -ne $script:Dataset) {
+        $records.AddRange([object[]]$script:Dataset)
+    }
+    if (@($script:UserImportRecords).Count -gt 0) {
+        $records.AddRange([object[]]$script:UserImportRecords)
+    }
+    if ($records.Count -eq 0) {
+        throw 'Es sind keine durchsuchbaren Katalogdatensätze verfügbar.'
+    }
+    if ($null -eq $script:CombinedCatalogIndex) {
+        $script:CombinedCatalogIndex = Build-MaterialCatalogIndex -Records $records.ToArray()
+    }
+    return [pscustomobject]@{
+        Records = $records.ToArray()
+        Index = $script:CombinedCatalogIndex
+    }
+}
+
 function Get-ItemView {
     param([object]$Record)
 
@@ -942,6 +1590,14 @@ function Get-ItemView {
         Url = $Record.Url
         SourceName = $Record.SourceName
         SourceUrl = $Record.SourceUrl
+        RecordKind = if ($Record.RecordKind) { $Record.RecordKind } else { 'source-catalog' }
+        SourceRecordId = if ($Record.SourceRecordId) { $Record.SourceRecordId } else { $Record.Id }
+        GwpStandard = if ($Record.GwpStandard) { $Record.GwpStandard } else { 'EN 15804+A2' }
+        GwpModules = if ($Record.GwpModules) { $Record.GwpModules } else { 'A1-A3' }
+        LicenseStatus = if ($Record.LicenseStatus) { $Record.LicenseStatus } else { $script:CatalogLicenseStatus }
+        LicenseNotice = $Record.LicenseNotice
+        SolarReflectance = $Record.SolarReflectance
+        UserImportBatchId = $Record.UserImportBatchId
         DataStockId = $Record.DataStockId
         DataStockVersion = $Record.DataStockVersion
         RetrievedAt = $Record.RetrievedAt
@@ -998,10 +1654,118 @@ function Get-MetricComparisons {
     return $comparisons.ToArray()
 }
 
+function Handle-UserImportRequest {
+    param([System.Net.HttpListenerContext]$Context)
+
+    $path = $Context.Request.Url.AbsolutePath
+    $method = $Context.Request.HttpMethod
+    if ($path -eq '/api/import/list') {
+        if ($method -ne 'GET') {
+            Send-Json -Context $Context -StatusCode 405 -Value @{ error = 'Diese Importroute unterstützt nur GET.' }
+            return
+        }
+        try {
+            Send-Json -Context $Context -StatusCode 200 -Value @{
+                batches = @(Get-UserImportBatchSummary)
+                recordCount = @($script:UserImportRecords).Count
+                licenseStatus = $script:UserImportLicenseStatus
+                usageNotice = $script:UserImportUsageNotice
+            }
+        }
+        catch {
+            Send-Json -Context $Context -StatusCode 500 -Value @{ error = "Der lokale Import-Speicher konnte nicht gelesen werden: $($_.Exception.Message)" }
+        }
+        return
+    }
+
+    if ($path -notin @('/api/import/preview', '/api/import/confirm', '/api/import/remove', '/api/import/discard')) {
+        Send-Json -Context $Context -StatusCode 404 -Value @{ error = 'Diese Importroute wurde nicht gefunden.' }
+        return
+    }
+    if ($method -ne 'POST') {
+        Send-Json -Context $Context -StatusCode 405 -Value @{ error = 'Diese Importroute unterstützt nur POST.' }
+        return
+    }
+
+    try {
+        Assert-SameOriginImportRequest -Context $Context
+        if ($path -eq '/api/import/preview') {
+            $contentType = ([string]$Context.Request.ContentType -split ';', 2)[0].Trim()
+            $charset = [regex]::Match([string]$Context.Request.ContentType, '(?i)charset\s*=\s*"?([^;"\s]+)').Groups[1].Value
+            if ($contentType -ine 'text/csv' -or ($charset -and $charset -ine 'utf-8')) {
+                Send-Json -Context $Context -StatusCode 415 -Value @{ error = 'Bitte eine UTF-8-CSV-Datei hochladen.' }
+                return
+            }
+            $csvText = Read-StrictUtf8RequestText -Request $Context.Request -MaximumBytes $script:UserImportMaxBytes
+            $preview = New-UserImportPreview -CsvText $csvText
+            Send-Json -Context $Context -StatusCode 200 -Value $preview
+            return
+        }
+
+        $jsonType = ([string]$Context.Request.ContentType -split ';', 2)[0].Trim()
+        if ($jsonType -ine 'application/json') {
+            Send-Json -Context $Context -StatusCode 415 -Value @{ error = 'Die Anfrage muss application/json verwenden.' }
+            return
+        }
+        $jsonText = Read-StrictUtf8RequestText -Request $Context.Request -MaximumBytes 16384
+        $payload = ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop
+        if ($path -eq '/api/import/confirm') {
+            if ([string]::IsNullOrWhiteSpace([string]$payload.previewId) -or $payload.previewId -notmatch '^[a-f0-9]{32}$') {
+                Send-Json -Context $Context -StatusCode 400 -Value @{ error = 'Ungültige Importvorschau.' }
+                return
+            }
+            $result = Confirm-UserImport -PreviewId $payload.previewId -RightsConfirmed ($payload.rightsConfirmed -eq $true)
+            Send-Json -Context $Context -StatusCode 201 -Value $result
+            return
+        }
+
+        if ($path -eq '/api/import/discard') {
+            if ([string]::IsNullOrWhiteSpace([string]$payload.previewId) -or $payload.previewId -notmatch '^[a-f0-9]{32}$') {
+                Send-Json -Context $Context -StatusCode 400 -Value @{ error = 'Ungültige Importvorschau.' }
+                return
+            }
+            if (-not (Remove-PendingUserImport -PreviewId $payload.previewId)) {
+                Send-Json -Context $Context -StatusCode 404 -Value @{ error = 'Diese Importvorschau wurde nicht gefunden.' }
+                return
+            }
+            Send-Json -Context $Context -StatusCode 200 -Value @{ discarded = $true }
+            return
+        }
+
+        if ([string]::IsNullOrWhiteSpace([string]$payload.batchId) -or $payload.batchId -notmatch '^[a-f0-9]{32}$') {
+            Send-Json -Context $Context -StatusCode 400 -Value @{ error = 'Ungültige Import-ID.' }
+            return
+        }
+        if (-not (Remove-UserImportBatch -BatchId $payload.batchId)) {
+            Send-Json -Context $Context -StatusCode 404 -Value @{ error = 'Dieser Import wurde nicht gefunden.' }
+            return
+        }
+        Send-Json -Context $Context -StatusCode 200 -Value @{ removed = $true; batchId = $payload.batchId }
+    }
+    catch {
+        $statusCode = if ($_.Exception.Data['StatusCode']) { [int]$_.Exception.Data['StatusCode'] } else { 400 }
+        $errorMessage = [string]$_.Exception.Message
+        if ($errorMessage -match 'abgelaufen') {
+            $statusCode = 410
+        }
+        elseif ($errorMessage -match 'Konflikt') {
+            $statusCode = 409
+        }
+        elseif ($errorMessage -match 'denselben App-Ursprung') {
+            $statusCode = 403
+        }
+        Send-Json -Context $Context -StatusCode $statusCode -Value @{ error = $errorMessage }
+    }
+}
+
 function Handle-Request {
     param([System.Net.HttpListenerContext]$Context)
 
     $path = $Context.Request.Url.AbsolutePath
+    if ($path.StartsWith('/api/import/')) {
+        Handle-UserImportRequest -Context $Context
+        return
+    }
     if ($path -eq '/api/health') {
         Send-Json -Context $Context -StatusCode 200 -Value @{
             ready = $true
@@ -1020,8 +1784,8 @@ function Handle-Request {
             return
         }
 
-        Ensure-Dataset
-        $search = Find-MaterialRecords -Records $script:Dataset -Index $script:CatalogIndex -Query $query
+        $catalog = Get-SearchableCatalog
+        $search = Find-MaterialRecords -Records $catalog.Records -Index $catalog.Index -Query $query
         $queryTerms = $search.QueryTerms
         $matchedTerms = $search.MatchedTerms
         $matches = $search.Records
@@ -1102,7 +1866,7 @@ function Handle-Request {
             groups = $groups
             retrievedAt = $script:RetrievedAt
             warning = $script:DataWarning
-            source = $script:DataSource
+            source = if (@($script:UserImportRecords).Count -gt 0) { "$($script:DataSource) + lokale Benutzerimporte" } else { $script:DataSource }
             provenance = (Get-SourceProvenance)
         }
         return
@@ -1113,11 +1877,11 @@ function Handle-Request {
         $id = $parameters.Get('id')
         $version = $parameters.Get('version')
         $application = $parameters.Get('useCase')
-        Ensure-Dataset
+        $catalog = Get-SearchableCatalog
 
-        $record = $script:Dataset | Where-Object { $_.Id -eq $id -and $_.Version -eq $version } | Select-Object -First 1
+        $record = $catalog.Records | Where-Object { $_.Id -eq $id -and $_.Version -eq $version } | Select-Object -First 1
         if ($null -eq $record) {
-            Send-Json -Context $Context -StatusCode 404 -Value @{ error = 'Dieser Datensatz ist im geladenen OEKOBAUDAT-Stand nicht verfuegbar.' }
+            Send-Json -Context $Context -StatusCode 404 -Value @{ error = 'Dieser Datensatz ist im geladenen Katalog nicht verfügbar.' }
             return
         }
 
@@ -1144,7 +1908,7 @@ function Handle-Request {
         }
         $group = @()
         if ($comparisonCanBeMade) {
-            $group = @($script:Dataset | Where-Object {
+            $group = @($catalog.Records | Where-Object {
                 $_.Category -eq $category -and
                 $_.Unit -eq $record.Unit -and
                 $_.ReferenceAmount -eq $record.ReferenceAmount -and
@@ -1187,7 +1951,7 @@ function Handle-Request {
             alternatives = $alternatives
             retrievedAt = $script:RetrievedAt
             warning = $script:DataWarning
-            source = $script:DataSource
+            source = if (@($script:UserImportRecords).Count -gt 0) { "$($script:DataSource) + lokale Benutzerimporte" } else { $script:DataSource }
             provenance = (Get-SourceProvenance)
         }
         return
@@ -1199,11 +1963,13 @@ function Handle-Request {
         '/swiss.css' = 'swiss.css'
         '/app.js' = 'app.js'
         '/ifc.mjs' = 'ifc.mjs'
+        '/demo-data.mjs' = 'demo-data.mjs'
         '/hero-landscape.svg' = 'hero-landscape.svg'
+        '/tree-cursor.svg' = 'tree-cursor.svg'
     }
     if ($staticFiles.ContainsKey($path)) {
         $file = Join-Path (Join-Path $script:Root 'public') $staticFiles[$path]
-        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js' -or $path -eq '/ifc.mjs') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/hero-landscape.svg') { 'image/svg+xml; charset=utf-8' } else { 'text/css; charset=utf-8' }
+        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js' -or $path -eq '/ifc.mjs' -or $path -eq '/demo-data.mjs') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/hero-landscape.svg' -or $path -eq '/tree-cursor.svg') { 'image/svg+xml; charset=utf-8' } else { 'text/css; charset=utf-8' }
         $bytes = [System.IO.File]::ReadAllBytes($file)
         Send-Response -Context $Context -StatusCode 200 -ContentType $contentType -Body $bytes
         return
@@ -1236,8 +2002,13 @@ if (-not $script:TestMode) {
             catch {
                 Write-Host ("Anfrage fehlgeschlagen: {0}" -f $_.Exception.Message) -ForegroundColor Red
                 if ($context.Response.OutputStream.CanWrite) {
-                    Send-Json -Context $context -StatusCode 500 -Value @{
-                        error = "Die OEKOBAUDAT-Daten konnten nicht verarbeitet werden: $($_.Exception.Message)"
+                    try {
+                        Send-Json -Context $context -StatusCode 500 -Value @{
+                            error = "Die Anfrage konnte nicht verarbeitet werden: $($_.Exception.Message)"
+                        }
+                    }
+                    catch {
+                        Write-Host ("Die Clientverbindung wurde vor der Fehlerantwort geschlossen: {0}" -f $_.Exception.Message)
                     }
                 }
             }

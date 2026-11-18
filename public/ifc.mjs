@@ -43,6 +43,78 @@ const DATASET_UNITS = [
   { dimension: "count", factor: 1, names: ["st", "stk", "stueck", "stück", "pc", "pcs", "piece", "pieces", "each"] },
 ];
 
+const IFC_PRODUCT_PREFIXES = [
+  "IFCBEAM",
+  "IFCBUILDINGELEMENT",
+  "IFCCHIMNEY",
+  "IFCCOLUMN",
+  "IFCCOVERING",
+  "IFCCURTAINWALL",
+  "IFCDISTRIBUTIONELEMENT",
+  "IFCDISTRIBUTIONCONTROLELEMENT",
+  "IFCDOOR",
+  "IFCELEMENTASSEMBLY",
+  "IFCELEMENTCOMPONENT",
+  "IFCENERGYCONVERSIONDEVICE",
+  "IFCFEATUREELEMENT",
+  "IFCFLOW",
+  "IFCFURNISHINGELEMENT",
+  "IFCGEOGRAPHICELEMENT",
+  "IFCMECHANICALFASTENER",
+  "IFCOPENINGELEMENT",
+  "IFCPILE",
+  "IFCPLATE",
+  "IFCRAILING",
+  "IFCRAMP",
+  "IFCREINFORCING",
+  "IFCROOF",
+  "IFCSHADINGDEVICE",
+  "IFCSLAB",
+  "IFCSTAIR",
+  "IFCSTRUCTURAL",
+  "IFCTENDON",
+  "IFCTRANSPORTELEMENT",
+  "IFCWALL",
+  "IFCWINDOW",
+];
+
+const MATERIAL_CATEGORY_SUGGESTIONS = [
+  { name: "Beton", query: "Beton", aliases: ["beton", "concrete"] },
+  { name: "Ziegel", query: "Ziegel", aliases: ["ziegel", "mauerziegel", "brick", "clay brick"] },
+  {
+    name: "Mineralwolle",
+    query: "Mineralwolle",
+    aliases: ["mineralwolle", "mineral wool", "steinwolle", "rock wool", "glaswolle", "glass wool"],
+  },
+  { name: "Holzfaser", query: "Holzfaser", aliases: ["holzfaser", "wood fibre", "wood fiber"] },
+  { name: "Holz", query: "Holz", aliases: ["holz", "wood", "timber"] },
+  { name: "Stahl", query: "Stahl", aliases: ["stahl", "steel"] },
+  { name: "Gipsplatten", query: "Gipskarton", aliases: ["gipskarton", "gipsplatte", "gypsum board", "drywall"] },
+];
+
+function isIfcProductRecord(record) {
+  return !record.type.endsWith("TYPE") &&
+    IFC_PRODUCT_PREFIXES.some((prefix) => record.type.startsWith(prefix));
+}
+
+function normalizeMaterialText(value) {
+  return String(value ?? "")
+    .toLocaleLowerCase("de-DE")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export function suggestIfcMaterialCategory(value) {
+  const normalized = normalizeMaterialText(value);
+  if (!normalized) return null;
+  const padded = ` ${normalized} `;
+  const category = MATERIAL_CATEGORY_SUGGESTIONS.find(({ aliases }) =>
+    aliases.some((alias) => padded.includes(` ${normalizeMaterialText(alias)} `)));
+  return category ? { name: category.name, query: category.query } : null;
+}
+
 function splitTopLevel(value) {
   const parts = [];
   let start = 0;
@@ -424,6 +496,7 @@ export function parseIfcText(text) {
   }
 
   const objectIds = new Set([
+    ...[...records.values()].filter(isIfcProductRecord).map((record) => record.id),
     ...materialByObject.keys(),
     ...quantitiesByObject.keys(),
     ...typeByObject.keys(),
@@ -459,7 +532,7 @@ export function parseIfcText(text) {
   }
 
   if (!elements.length) {
-    throw new Error("Es wurden keine Bauteile mit expliziten IFC-Materialzuordnungen oder Mengen gefunden.");
+    throw new Error("Es wurden keine unterstützten IFC-Bauteilinstanzen gefunden.");
   }
 
   return {
@@ -510,8 +583,10 @@ export function assessProjectDataQuality(entries, containmentAvailable) {
   const missingMaterialMatchCount = entries.filter((entry) =>
     entry.calculation &&
     (!String(entry.material ?? "").trim() || !String(entry.dataset?.Name ?? "").trim())).length;
+  const categorySuggestionCount = entries.filter((entry) =>
+    entry.calculation && entry.matchType === "category-suggestion").length;
   const uncontainedCount = entries.filter((entry) => !entry.contained).length;
-  if (unresolvedCount || invalidDatasetCount || missingMaterialMatchCount ||
+  if (unresolvedCount || invalidDatasetCount || missingMaterialMatchCount || categorySuggestionCount ||
     !containmentAvailable || uncontainedCount) {
     const reasons = [];
     if (unresolvedCount) {
@@ -522,6 +597,11 @@ export function assessProjectDataQuality(entries, containmentAvailable) {
     }
     if (missingMaterialMatchCount) {
       reasons.push(`${missingMaterialMatchCount} Materialzuordnungen sind nicht eindeutig belegt.`);
+    }
+    if (categorySuggestionCount) {
+      reasons.push(categorySuggestionCount === 1
+        ? "Die Zuordnung von 1 Bauteil beruht auf einem manuell gewählten Materialkategorie-Vorschlag; Produktgleichheit ist nicht bestätigt."
+        : `Die Zuordnungen von ${categorySuggestionCount} Bauteilen beruhen auf manuell gewählten Materialkategorie-Vorschlägen; Produktgleichheit ist nicht bestätigt.`);
     }
     if (!containmentAvailable || uncontainedCount) {
       reasons.push(!containmentAvailable
@@ -609,4 +689,15 @@ export function flattenSearchResults(data) {
     }
   }
   return items;
+}
+
+export function uniqueIfcSearchCandidates(data) {
+  const seen = new Set();
+  return flattenSearchResults(data).filter((item) => {
+    if (!item?.Id) return false;
+    const key = `${item.Id}|${item.Version || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

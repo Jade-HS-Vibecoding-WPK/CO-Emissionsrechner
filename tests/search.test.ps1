@@ -170,13 +170,20 @@ process-1;1.0;Beton;Bauprodukte / Beton;kg;1;0.12;EN 15804+A2;A1-A3;2030;Test ow
         param(
             [string]$Uri,
             [string]$OutFile,
-            [switch]$UseBasicParsing
+            [switch]$UseBasicParsing,
+            [int]$TimeoutSec
         )
 
         if ($Uri -eq $script:ReleasePageUrl) {
+            if ($TimeoutSec -ne 15) {
+                throw 'The official release-page request should have a bounded timeout.'
+            }
             return [pscustomobject]@{ Content = $script:TestReleaseHtml }
         }
         if ($Uri -eq $script:TestExpectedDownloadUrl) {
+            if ($TimeoutSec -ne 60) {
+                throw 'The official catalog download should have a bounded timeout.'
+            }
             [System.IO.File]::WriteAllText($OutFile, $script:TestCsvContent, [System.Text.Encoding]::ASCII)
             return
         }
@@ -211,7 +218,8 @@ process-1;1.0;Beton;Bauprodukte / Beton;kg;1;0.12;EN 15804+A2;A1-A3;2030;Test ow
             param(
                 [string]$Uri,
                 [string]$OutFile,
-                [switch]$UseBasicParsing
+                [switch]$UseBasicParsing,
+                [int]$TimeoutSec
             )
             throw 'simulated offline source'
         }

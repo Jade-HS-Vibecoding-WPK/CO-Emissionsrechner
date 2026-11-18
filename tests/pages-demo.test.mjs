@@ -45,14 +45,19 @@ test("Pages build injects demo mode and retains relative static assets", async (
     const html = await readFile(path.join(outputDirectory, "index.html"), "utf8");
     const app = await readFile(path.join(outputDirectory, "app.js"), "utf8");
     const imports = await readFile(path.join(outputDirectory, "ifc.mjs"), "utf8");
+    const styles = await readFile(path.join(outputDirectory, "styles.css"), "utf8");
+    const cursor = await readFile(path.join(outputDirectory, "tree-cursor.svg"), "utf8");
     assert.match(html, /window\.__PAGES_DEMO__\s*=\s*true/);
     assert.match(html, /href="\.\/styles\.css"/);
     assert.match(html, /src="\.\/app\.js"/);
     assert.match(html, /src="\.\/hero-landscape\.svg"/);
+    assert.doesNotMatch(html, /id="local-import"|user-import-file|\/api\/import/);
     assert.match(app, /from "\.\/ifc\.mjs"/);
     assert.doesNotMatch(html, /(?:href|src)="\/(?:styles|swiss|app|ifc|hero)/);
     assert.match(app, /pagesDemo\s*\?\s*searchDemoData/);
     assert.match(imports, /export function parseIfcText/);
+    assert.match(styles, /\.\/tree-cursor\.svg/);
+    assert.match(cursor, /<svg/);
   } finally {
     await rm(outputDirectory, { recursive: true, force: true });
   }

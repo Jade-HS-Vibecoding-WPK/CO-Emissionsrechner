@@ -2,9 +2,10 @@ import {
   assessProjectDataQuality,
   calculateContribution,
   datasetUnitInfo,
-  flattenSearchResults,
   isDatasetValid,
   parseIfcText,
+  suggestIfcMaterialCategory,
+  uniqueIfcSearchCandidates,
 } from "./ifc.mjs";
 import { getDemoDetail, searchDemoData } from "./demo-data.mjs";
 
@@ -180,11 +181,23 @@ function getPeerGroups(group) {
     .sort(comparePeerGroups);
 }
 
-async function requestJson(url) {
-  const response = await fetch(url);
+async function requestJson(url, options) {
+  const response = await fetch(url, options);
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || "Die Anfrage ist fehlgeschlagen.");
   return result;
+}
+
+function getHttpsLink(rawUrl, label) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "https:") {
+      return `<a href="${escapeHtml(url.href)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`;
+    }
+  } catch {
+    return escapeHtml(label);
+  }
+  return escapeHtml(label);
 }
 
 function renderResults(data) {
@@ -195,7 +208,7 @@ function renderResults(data) {
 
   if (!data.groups.length) {
     resultsList.innerHTML = `<div class="empty-detail"><strong>Keine passenden Datensätze gefunden</strong><p>Versuche einen allgemeineren Begriff, zum Beispiel „Dämmung“, „Holz“ oder „Beton“.</p></div>`;
-    detailPanel.innerHTML = `<div class="empty-detail"><span class="empty-icon" aria-hidden="true">⌕</span><strong>Suche anpassen</strong><p>Die App zeigt nur Treffer aus dem gewählten ÖKOBAUDAT-Datenbestand.</p></div>`;
+    detailPanel.innerHTML = `<div class="empty-detail"><span class="empty-icon" aria-hidden="true">⌕</span><strong>Suche anpassen</strong><p>Die App zeigt nur Treffer aus den geladenen Materialdatenbeständen und bestätigten lokalen Imports.</p></div>`;
     return;
   }
 
@@ -222,6 +235,7 @@ function renderResults(data) {
             ${peer.Items.map((item, itemIndex) => `
               <button class="result-card" type="button" data-group-index="${groupIndex}" data-peer-index="${peerIndex}" data-item-index="${itemIndex}" aria-pressed="false">
                 <span class="result-name">${escapeHtml(item.Name)}</span>
+                ${item.RecordKind === "user-import" ? `<span class="result-source-tag">LOKALER IMPORT · ${escapeHtml(item.SourceName || "Quelle angegeben")}</span>` : ""}
                 <span class="result-bottom">
                   <span class="result-year">${escapeHtml(item.ReferenceYear || "Jahr unbekannt")} · ${item.ReferenceAmount && item.Unit ? `pro ${escapeHtml(item.ReferenceAmount)} ${escapeHtml(readableText(item.Unit))}` : "Bezugsgröße fehlt"}</span>
                   <span class="result-value">${item.Gwp === null ? "Kein GWP-Wert" : `${pagesDemo ? "DEMO · " : ""}${formatNumber(item.Gwp)} kg CO₂-eq`}</span>
@@ -271,13 +285,15 @@ function renderResults(data) {
   const catalogCount = hasCatalogCount
     ? ` Lokaler Suchindex mit ${formatNumber(provenance.catalogRecordCount)} Datensätzen.`
     : "";
+  const importedCount = Number(provenance.userImportRecordCount) || 0;
+  const importedNote = importedCount ? ` ${formatNumber(importedCount)} lokale Importdatensätze; Nutzungsrechte sind nicht unabhängig verifiziert.` : "";
   const matchedAliases = (data.matchedTerms || [])
     .filter((term) => term.toLocaleLowerCase("de") !== String(data.query || "").toLocaleLowerCase("de"));
   const aliasNote = matchedAliases.length
     ? ` Synonym-/Alternativtreffer über: ${matchedAliases.join(", ")}.`
     : "";
   const usageNote = provenance.usageNotice ? ` ${provenance.usageNotice}` : "";
-  const provenanceText = `Quelle: ${readableText(data.source)}.${release} Cache: ${cacheStatus}; lokal abgerufen am ${data.retrievedAt || "unbekannt"}.${catalogCount}${aliasNote}${usageNote}`;
+  const provenanceText = `Quelle: ${readableText(data.source)}.${release} Cache: ${cacheStatus}; lokal abgerufen am ${data.retrievedAt || "unbekannt"}.${catalogCount}${importedNote}${aliasNote}${usageNote}`;
   if (data.warning) {
     const title = provenance.cacheStatus === "refresh-failed" || provenance.cacheStatus === "release-unverified-cache"
       ? "Zwischengespeicherte Daten"
@@ -344,14 +360,31 @@ function renderDetail(data) {
   const metricBasis = item.ReferenceAmount && item.Unit
     ? `je ${escapeHtml(item.ReferenceAmount)} ${escapeHtml(readableText(item.Unit))}`
     : "je angegebener Bezugsmenge";
-  const metrics = item.Metrics?.length
-    ? `<h3 class="metric-heading">Weitere Umweltindikatoren</h3><div class="metric-grid">${item.Metrics.map((metric) => `
-        <div class="metric">
-          <span class="metric-name">${escapeHtml(readableText(metric.Name))}</span>
-          <span class="metric-value">${formatNumber(metric.Value)} <span class="metric-unit">${escapeHtml(readableText(metric.Unit))} · ${metricBasis}</span></span>
-        </div>
-      `).join("")}</div>`
-    : `<h3 class="metric-heading">Weitere Umweltindikatoren</h3><p class="no-alternatives">${pagesDemo ? "Keine weiteren synthetischen Demo-Beispiele vorhanden." : "Für diesen Datensatz sind in der ausgewerteten Lebenszyklusphase keine weiteren Werte vorhanden."}</p>`;
+  const solar = item.SolarReflectance;
+  const solarSource = solar?.SourceName
+    ? getHttpsLink(solar.SourceUrl, `Quelle: ${solar.SourceName}`)
+    : "Keine Quellenangabe vorhanden";
+  const solarCard = `<div class="metric solar-reflectance">
+    <span class="metric-name">Solarreflexion / Reflexionsgrad</span>
+    <span class="metric-value">${solar ? `${formatNumber(solar.Value)} <span class="metric-unit">${escapeHtml(solar.Unit || "%")}</span>` : "Nicht verfügbar"}</span>
+    <small>${solar ? `Messmethode: ${escapeHtml(solar.Method)} · Wellenlängenbereich: ${escapeHtml(solar.Wavelength)} (laut Quelle)` : "Kein belegter Wert im ausgewählten Datensatz."}</small>
+    <small>${solarSource}</small>
+  </div>`;
+  const metricCards = (item.Metrics || []).map((metric) => `
+    <div class="metric">
+      <span class="metric-name">${escapeHtml(readableText(metric.Name))}</span>
+      <span class="metric-value">${formatNumber(metric.Value)} <span class="metric-unit">${escapeHtml(readableText(metric.Unit))} · ${metricBasis}</span></span>
+    </div>
+  `);
+  let waterScarcityIndex = (item.Metrics || []).findIndex((metric) =>
+    /WDP|water.?scarcity|wasserknappheit/i.test(String(metric.Name || "")));
+  if (waterScarcityIndex % 2 === 1) {
+    const [waterScarcityCard] = metricCards.splice(waterScarcityIndex, 1);
+    metricCards.unshift(waterScarcityCard);
+    waterScarcityIndex = 0;
+  }
+  metricCards.splice(waterScarcityIndex >= 0 ? waterScarcityIndex + 1 : metricCards.length, 0, solarCard);
+  const metrics = `<h3 class="metric-heading">Weitere Umweltindikatoren</h3><div class="metric-grid">${metricCards.join("")}</div>`;
   const alternatives = data.alternatives?.length
     ? data.alternatives.map((alternative) => {
       const lowerMetrics = (alternative.Metrics || []).filter((metric) => metric.Relation === "lower");
@@ -379,7 +412,7 @@ function renderDetail(data) {
             ${lowerMetrics.length ? `<p><strong>Niedrigere ausgewiesene Indikatorwerte:</strong> ${lowerMetrics.map((metric) => escapeHtml(readableText(metric.Name))).join(", ")}.</p>` : ""}
             ${higherMetrics.length ? `<p><strong>Abweichungen mit höherem Einzelwert:</strong> ${higherMetrics.map((metric) => escapeHtml(readableText(metric.Name))).join(", ")}.</p>` : ""}
             ${comparisonRows ? `<details><summary>Alle gemeinsam verfügbaren Indikatoren (${(alternative.Metrics || []).length})</summary><div class="comparison-rows">${comparisonRows}</div></details>` : `<p>Keine weiteren Indikatorwerte mit gleicher Bezeichnung und Einheit für beide Datensätze vorhanden.</p>`}
-            <p><strong>Dateneigner / Version:</strong> ${escapeHtml(alternative.Item.Owner || "nicht angegeben")} · ${escapeHtml(alternative.Item.Version || "nicht angegeben")} · gültig bis ${escapeHtml(alternative.Item.ValidUntil || "nicht angegeben")}. <a class="dataset-link" href="${escapeHtml(alternative.Item.Url)}" target="_blank" rel="noreferrer">Quelldatensatz ↗</a></p>
+            <p><strong>Dateneigner / Version:</strong> ${escapeHtml(alternative.Item.Owner || "nicht angegeben")} · ${escapeHtml(alternative.Item.Version || "nicht angegeben")} · gültig bis ${escapeHtml(alternative.Item.ValidUntil || "nicht angegeben")}. ${getHttpsLink(alternative.Item.SourceUrl || alternative.Item.Url, "Quelldatensatz ↗")}</p>
           </div>
           <p class="alternative-limits">Gleiche Kategorie, Einheit, Bezugsmenge und vorläufiges Namensprofil innerhalb A1–A3. Dieser Datensatzvergleich ist kein Materialersatz und belegt weder technische Gleichwertigkeit noch eine bessere Gesamtökobilanz.</p>
         </div>
@@ -398,7 +431,7 @@ function renderDetail(data) {
       ? "Gültigkeit abgelaufen"
       : "Gültigkeit unbekannt";
   const useNote = data.materialAlternative.Application
-    ? `Dein gewählter Einsatz: ${escapeHtml(data.materialAlternative.Application)}. Er dient als Kontext für den Materialalternativen-Check, filtert aber nicht die ÖKOBAUDAT-Treffer.`
+    ? `Dein gewählter Einsatz: ${escapeHtml(data.materialAlternative.Application)}. Er dient als Kontext für den Materialalternativen-Check, filtert aber nicht die Katalogtreffer.`
     : "Ohne gewählten Einsatz lässt sich kein bauteilbezogener Materialersatz prüfen.";
   const ratingNote = pagesDemo
     ? "Keine fachliche Einordnung: synthetische Demo-Werte ohne Quellenbeleg."
@@ -423,9 +456,9 @@ function renderDetail(data) {
       <div class="gwp-card">
         <div class="gwp-main">
           <span class="gwp-label">${pagesDemo ? "Synthetischer DEMO-Wert · nicht geprüft" : "Treibhauspotenzial · GWP total"}</span>
-          <strong class="gwp-value">${formatNumber(item.Gwp)}</strong>
-          <span class="gwp-unit">kg CO₂-Äquivalent ${reference}</span>
-          <div class="gwp-caption">${pagesDemo ? "Kein Quellenbeleg · keine geprüfte Ökobilanz" : "Produktionsphase A1–A3 · DIN EN 15804+A2"}</div>
+          <strong class="gwp-value">${item.Gwp === null || item.Gwp === undefined ? "Nicht verfügbar" : formatNumber(item.Gwp)}</strong>
+          <span class="gwp-unit">${item.Gwp === null || item.Gwp === undefined ? "Kein GWP-Faktor in diesem Datensatz" : `kg CO₂-Äquivalent ${reference}`}</span>
+          <div class="gwp-caption">${pagesDemo ? "Kein Quellenbeleg · keine geprüfte Ökobilanz" : `${escapeHtml(item.GwpStandard || "Methode nicht angegeben")} · Module ${escapeHtml(item.GwpModules || "nicht angegeben")}`}</div>
         </div>
         <aside class="gwp-ranking" aria-label="Relative Rangordnung">
           <span class="gwp-ranking-label">${hasRank ? "Rang in Vergleichsgruppe" : "Einordnung"}</span>
@@ -438,15 +471,18 @@ function renderDetail(data) {
       </div>
       ${metrics}
       <dl class="metadata">
-        <div><dt>Datenquelle</dt><dd>${escapeHtml(readableText(data.source))}</dd></div>
+        <div><dt>Datenquelle</dt><dd>${escapeHtml(item.SourceName || data.source || "Nicht angegeben")}</dd></div>
         <div><dt>Datensatz-Version</dt><dd>${escapeHtml(item.Version || "Nicht angegeben")}</dd></div>
+        <div><dt>Quellen-ID</dt><dd>${escapeHtml(item.SourceRecordId || item.Id || "Nicht angegeben")}</dd></div>
+        <div><dt>Nutzungsstatus</dt><dd>${escapeHtml(item.LicenseStatus || data.provenance?.licenseStatus || "Nicht angegeben")}</dd></div>
+        <div><dt>Quellenhinweis</dt><dd>${escapeHtml(item.LicenseNotice || data.provenance?.usageNotice || "Nicht angegeben")}</dd></div>
         <div><dt>Vorläufiges Vergleichsprofil</dt><dd>${escapeHtml(item.ComparisonClass || "Nicht angegeben")}</dd></div>
         <div><dt>Referenzjahr</dt><dd>${escapeHtml(item.ReferenceYear || "Nicht angegeben")}</dd></div>
         <div><dt>Dateneigner</dt><dd>${escapeHtml(item.Owner || "Nicht angegeben")}</dd></div>
         <div><dt>Gültigkeit</dt><dd>${escapeHtml(item.ValidUntil || "Nicht angegeben")} · ${escapeHtml(validityLabel)}</dd></div>
         <div><dt>Lokal abgerufen</dt><dd>${escapeHtml(data.retrievedAt || "Nicht angegeben")}</dd></div>
       </dl>
-      ${pagesDemo ? "" : `<a class="dataset-link" href="${escapeHtml(item.Url)}" target="_blank" rel="noreferrer">Originaldatensatz bei ÖKOBAUDAT ansehen ↗</a>`}
+      ${pagesDemo ? "" : getHttpsLink(item.SourceUrl || item.Url, `${item.SourceName || "Quelldatensatz"} ansehen ↗`)}
       <p class="compare-note">${interpretationNote}</p>
       <div class="alternatives">
         <h3>${pagesDemo ? "Demo-Werte · keine ökologische Bewertung" : "GWP-Datensatzvergleich"}</h3>
@@ -480,7 +516,7 @@ form.addEventListener("submit", async (event) => {
   resultsSection.hidden = true;
   selectedItem = null;
   selectedButton = null;
-  setMessage("ÖKOBAUDAT wird durchsucht", "Die offizielle Downloadseite wird auf den aktuellen Datenstand geprüft; die verlinkte CSV-Datei wird bei Bedarf lokal zwischengespeichert.", "loading");
+  setMessage("Materialdaten werden durchsucht", "Der offizielle ÖKOBAUDAT-Datenstand wird geprüft; bestätigte lokale Imports werden gemeinsam durchsucht.", "loading");
 
   try {
     const data = pagesDemo
@@ -503,15 +539,16 @@ function getSelectedDataset(row, searchResult) {
 function getDatasetSourceLink(dataset) {
   if (pagesDemo) return "DEMO-Beispielwert – keine Quelle";
   try {
-    const url = new URL(dataset?.Url);
+    const url = new URL(dataset?.SourceUrl || dataset?.Url);
     if (url.protocol === "https:" &&
-      (url.hostname === "oekobaudat.de" || url.hostname.endsWith(".oekobaudat.de"))) {
-      return `<a href="${escapeHtml(url.href)}" target="_blank" rel="noreferrer">ÖKOBAUDAT-Quelldatensatz ↗</a>`;
+      (dataset?.RecordKind === "user-import" ||
+        url.hostname === "oekobaudat.de" || url.hostname.endsWith(".oekobaudat.de"))) {
+      return `<a href="${escapeHtml(url.href)}" target="_blank" rel="noreferrer">${escapeHtml(dataset?.SourceName || "Quelldatensatz")} ↗</a>`;
     }
   } catch {
-    return "ÖKOBAUDAT-Quelldatensatz-Link nicht verfügbar";
+    return "Quelldatensatz-Link nicht verfügbar";
   }
-  return "ÖKOBAUDAT-Quelldatensatz-Link nicht verfügbar";
+  return "Quelldatensatz-Link nicht verfügbar";
 }
 
 function getDatasetValidityText(dataset) {
@@ -522,7 +559,62 @@ function getDatasetValidityText(dataset) {
 }
 
 function getPublicSourceHints() {
-  return `<small class="ifc-public-source-hints">Weitere Quellen zur manuellen Prüfung: <a href="https://www.wecobis.de/index.php?id=16043" target="_blank" rel="noreferrer">WECOBIS</a> (Materialkontext, kein GWP-Faktor) · <a href="https://ibu-epd.com/veroeffentlichte-epds/" target="_blank" rel="noreferrer">IBU-EPDs</a> (öffentliche PDF/HTML-Angaben prüfen). Daraus wird hier kein automatischer Zahlenwert übernommen.</small>`;
+  return `<small class="ifc-public-source-hints">Weitere Quellen zur manuellen Prüfung: <a href="https://www.wecobis.de/index.php?id=16043" target="_blank" rel="noreferrer">WECOBIS</a> (Materialkontext, kein GWP-Faktor) · <a href="https://ibu-epd.com/veroeffentlichte-epds/" target="_blank" rel="noreferrer">IBU-EPDs</a> (öffentliche Angaben prüfen). Daraus wird hier kein automatischer Zahlenwert übernommen; weitere Anbieter sind mangels geprüfter Zugangs- und Nutzungsrechte nicht integriert.</small>`;
+}
+
+function getIfcSearchItems(data) {
+  return uniqueIfcSearchCandidates(data);
+}
+
+async function searchIfcMaterial(material) {
+  const search = (query) => pagesDemo
+    ? searchDemoData(query)
+    : requestJson(`/api/search?q=${encodeURIComponent(query)}`);
+  const primaryData = await search(material);
+  const primaryItems = getIfcSearchItems(primaryData);
+  if (primaryItems.length) {
+    return {
+      items: primaryItems,
+      loading: false,
+      error: null,
+      matchType: "material-search",
+      provenance: primaryData.provenance || null,
+    };
+  }
+
+  const category = suggestIfcMaterialCategory(material);
+  if (!category || category.query.toLocaleLowerCase("de-DE") === material.trim().toLocaleLowerCase("de-DE")) {
+    return {
+      items: [],
+      loading: false,
+      error: null,
+      matchType: "material-search",
+      provenance: primaryData.provenance || null,
+    };
+  }
+
+  const categoryData = await search(category.query);
+  return {
+    items: getIfcSearchItems(categoryData),
+    loading: false,
+    error: null,
+    matchType: "category-suggestion",
+    category: category.name,
+    provenance: categoryData.provenance || primaryData.provenance || null,
+  };
+}
+
+function getSourceLicenseText(searchResult, dataset) {
+  if (pagesDemo) return "Synthetische Demo-Daten: keine reale Quelle oder Lizenzangabe.";
+  if (dataset?.RecordKind === "user-import") {
+    return `${dataset.SourceName || "Benutzerimport"} · Nutzungsrechte vom Importierenden bestätigt, nicht unabhängig verifiziert. ${dataset.LicenseNotice || ""}`.trim();
+  }
+  const provenance = searchResult?.provenance;
+  if (!provenance) return "Quellen- und Lizenzstatus nicht verfügbar.";
+  const licenseStatus = provenance.licenseStatus === "reuse-terms-not-independently-verified"
+    ? "Nutzungs- und Weitergaberechte nicht unabhängig verifiziert"
+    : provenance.licenseStatus || "Lizenzstatus nicht angegeben";
+  return `${provenance.sourceName || "Quelle"} · ${licenseStatus}. ${provenance.usageNotice || ""}`.trim();
 }
 
 function getQuantityLabel(quantity) {
@@ -564,13 +656,17 @@ function renderIfcResults() {
     } else if (element.materialStatus === "missing") {
       status = "Keine explizite IFC-Materialzuordnung vorhanden.";
     } else if (!searchResult || searchResult.loading) {
-      status = pagesDemo ? "Demo-Beispieldatensätze werden gesucht …" : "ÖKOBAUDAT-Datensätze werden gesucht …";
+      status = pagesDemo ? "Demo-Beispieldatensätze werden gesucht …" : "Materialdatensätze werden gesucht …";
     } else if (searchResult.error) {
       status = `Datensatzsuche fehlgeschlagen: ${searchResult.error}`;
     } else if (!candidates.length) {
-      status = pagesDemo ? "Keine passenden Demo-Beispiele für dieses IFC-Material." : "Keine ÖKOBAUDAT-Treffer für dieses IFC-Material.";
+      status = searchResult.matchType === "category-suggestion"
+        ? `Keine Datensätze für die mögliche Kategorie „${searchResult.category}“ gefunden.`
+        : pagesDemo ? "Keine passenden Demo-Beispiele für dieses IFC-Material." : "Keine passenden Materialdaten-Treffer für dieses IFC-Material.";
     } else if (!dataset) {
-      status = pagesDemo ? "Demo-Datensatz auswählen." : "ÖKOBAUDAT-Datensatz auswählen.";
+      status = searchResult.matchType === "category-suggestion"
+        ? `Nur Kategorie-Vorschläge für „${searchResult.category}“ gefunden; manuell prüfen und auswählen.`
+        : pagesDemo ? "Demo-Datensatz auswählen." : "Materialdaten-Datensatz auswählen.";
     } else if (!isDatasetValid(dataset)) {
       status = dataset.Validity === "expired"
         ? `Datensatz abgelaufen (${dataset.ValidUntil || "Ablaufjahr unbekannt"}); er wird nicht eingerechnet.`
@@ -594,15 +690,22 @@ function renderIfcResults() {
           calculation = calculateContribution(quantity, dataset);
           status = pagesDemo
             ? "Demo-Rechenbeispiel aus IFC-Menge und synthetischem GWP-Wert; keine geprüfte Bilanz."
-            : "Berechnet aus IFC-Menge und gewähltem ÖKOBAUDAT-Datensatz.";
+            : "Berechnet aus IFC-Menge und gewähltem, methodisch passendem Datensatz.";
           statusClass = "is-calculated";
         } catch (error) {
           status = error.message;
         }
+        if (calculation && searchResult.matchType === "category-suggestion") {
+          status = pagesDemo
+            ? `Demo-Kategorie-Vorschlag „${searchResult.category}“ manuell gewählt; synthetischer Wert, keine geprüfte Bilanz.`
+            : `Kategorie-Vorschlag „${searchResult.category}“ manuell gewählt; kein produktspezifischer Match.`;
+        }
       }
     }
 
-    if (calculation) completed.push({ calculation, dataset, material });
+    if (calculation) {
+      completed.push({ calculation, dataset, material, searchResult });
+    }
     else unresolved.push(element);
 
     const datasetOptions = candidates.map((candidate, candidateIndex) => {
@@ -626,18 +729,31 @@ function renderIfcResults() {
       const disabled = Boolean(item.error) || incompatible || item.canonicalValue < 0;
       return `<option value="${quantityIndex}" ${quantityIndex === row.selectedQuantityIndex ? "selected" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(getQuantityLabel(item))}</option>`;
     }).join("");
+    const categoryNotice = searchResult?.matchType === "category-suggestion"
+      ? `<small class="ifc-match-notice">Kategorie-Vorschlag „${escapeHtml(searchResult.category)}“ statt sicherem Produktmatch. Nur nach manueller Prüfung auswählen; Produktgleichheit ist nicht belegt.</small>`
+      : "";
+    const sourceLicenseNotice = dataset
+      ? `<small class="ifc-source-provenance">${escapeHtml(getSourceLicenseText(searchResult, dataset))}</small>`
+      : "";
     const materialCell = element.materialStatus === "ready"
       ? `<strong>${escapeHtml(material)}</strong><small>${escapeHtml(element.materialSource ? `Zuordnung aus ${element.materialSource}` : "Materialquelle nicht angegeben")}</small>
+          ${categoryNotice}
           <label class="ifc-control-label" for="ifc-dataset-${index}">Datensatz</label>
-          <select id="ifc-dataset-${index}" data-ifc-dataset="${index}" aria-label="ÖKOBAUDAT-Datensatz für ${escapeHtml(element.name)}">
+          <select id="ifc-dataset-${index}" data-ifc-dataset="${index}" aria-label="Materialdaten-Datensatz für ${escapeHtml(element.name)}">
             <option value="">Datensatz auswählen</option>${datasetOptions}
-          </select>${dataset ? `<small>${getDatasetSourceLink(dataset) || "ÖKOBAUDAT-Quelle: sicherer Datensatzlink nicht verfügbar"} · Version ${escapeHtml(dataset.Version || "nicht angegeben")} · Bezugsmenge ${escapeHtml(dataset.ReferenceAmount || "nicht angegeben")} ${escapeHtml(readableText(dataset.Unit || ""))} · ${escapeHtml(getDatasetValidityText(dataset))}</small>` : ""}${!calculation ? getPublicSourceHints() : ""}`
+          </select>${dataset ? `<small>${getDatasetSourceLink(dataset) || "Quelle: sicherer Datensatzlink nicht verfügbar"} · Version ${escapeHtml(dataset.Version || "nicht angegeben")} · Bezugsmenge ${escapeHtml(dataset.ReferenceAmount || "nicht angegeben")} ${escapeHtml(readableText(dataset.Unit || ""))} · ${escapeHtml(getDatasetValidityText(dataset))}</small>` : ""}${sourceLicenseNotice}${!calculation ? getPublicSourceHints() : ""}`
       : `<strong>${element.materials.length ? element.materials.map(escapeHtml).join(", ") : "Material fehlt"}</strong><small>${element.materialStatus === "ambiguous" ? escapeHtml(element.materialIssue || "Mehrfachzuordnung; keine Mengenaufteilung geraten") : "Keine direkte oder eindeutige Typzuordnung"}</small>`;
     const contributionCell = calculation
       ? `<strong>${formatNumber(calculation.contribution)} kg CO₂-eq</strong><small>${formatNumber(calculation.gwp)} kg CO₂-eq × ${formatNumber(calculation.datasetQuantity)} ${escapeHtml(readableText(calculation.datasetUnit))} ÷ ${formatNumber(calculation.referenceAmount)} ${escapeHtml(readableText(calculation.datasetUnit))}</small>`
       : "<span>—</span>";
 
-    assessmentEntries.push({ calculation, dataset, material, contained: element.contained });
+    assessmentEntries.push({
+      calculation,
+      dataset,
+      material,
+      contained: element.contained,
+      matchType: searchResult?.matchType,
+    });
     return `<tr>
       <th scope="row"><strong>${escapeHtml(element.name)}</strong><small>${escapeHtml(element.type)} · #${escapeHtml(element.id)}</small></th>
       <td>${materialCell}</td>
@@ -652,6 +768,8 @@ function renderIfcResults() {
 
   const containedRows = ifcState.rows.filter((row) => row.element.contained).length;
   const uncontainedRows = ifcState.rows.length - containedRows;
+  const categorySuggestionRows = completed.filter((entry) =>
+    entry.searchResult?.matchType === "category-suggestion").length;
   const scopeSummary = ifcState.containmentAvailable
     ? `${containedRows} erfasste ${containedRows === 1 ? "Bauteil ist" : "Bauteile sind"} in der IFC-Raumstruktur enthalten; ${uncontainedRows} nicht.`
     : "Keine IFC-Raumstrukturzuordnung gefunden; die Vollständigkeit des Modellumfangs ist nicht prüfbar.";
@@ -661,7 +779,7 @@ function renderIfcResults() {
   const quality = assessProjectDataQuality(assessmentEntries, ifcState.containmentAvailable);
   if (!completed.length) {
     modelTotal.innerHTML = `<div class="ifc-total-main">
-        <div><p class="ifc-total-eyebrow">${pagesDemo ? "Demo-Rechenvorschau · keine Bilanz" : "ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz"}</p><p class="ifc-total-empty">Noch keine Beiträge berechenbar</p></div>
+        <div><p class="ifc-total-eyebrow">${pagesDemo ? "Demo-Rechenvorschau · keine Bilanz" : "Katalog-Schätzung · A1–A3-Teilbilanz"}</p><p class="ifc-total-empty">Noch keine Beiträge berechenbar</p></div>
         <div class="ifc-quality" data-level="${pagesDemo ? "unknown" : quality.level}"><strong>${pagesDemo ? "Demo – nicht bewertet" : escapeHtml(quality.label)}</strong><p>${pagesDemo ? "Synthetische Werte erlauben keine Aussage zur Datenqualität." : escapeHtml(quality.explanation)}</p></div>
       </div>
       <p class="ifc-total-limit">Ohne berechenbare Beiträge wird keine Zahl ausgegeben. Es gibt keine statistische Unsicherheitsspanne; fehlende Daten werden nicht ergänzt oder geschätzt.</p>`;
@@ -669,6 +787,8 @@ function renderIfcResults() {
     const subtotal = completed.reduce((sum, item) => sum + item.calculation.contribution, 0);
     const scopeExplanation = unresolved.length
       ? `${completed.length} von ${ifcState.rows.length} erfassten Bauteilen sind in der Zahl enthalten; ${unresolved.length} bleiben unberechnet.`
+      : categorySuggestionRows
+        ? `Alle ${ifcState.rows.length} erfassten Bauteile wurden berechnet; ${categorySuggestionRows} ${categorySuggestionRows === 1 ? "Zuordnung beruht" : "Zuordnungen beruhen"} auf manuell gewählten Materialkategorie-Vorschlägen.`
       : `Alle ${ifcState.rows.length} vom Parser erfassten Bauteile sind berechenbar.`;
     const fileScopeWarning = !ifcState.containmentAvailable
       ? "Eine IFC-Raumstrukturzuordnung fehlt; die Vollständigkeit des Modellumfangs ist nicht prüfbar."
@@ -676,23 +796,25 @@ function renderIfcResults() {
         ? `${uncontainedRows} erfasste Bauteile sind keiner IFC-Raumstruktur zugeordnet; der Modellumfang ist nicht prüfbar.`
         : "Die Vollständigkeit des IFC-Exports ist nicht unabhängig bestätigt.";
     const groupedDatasets = new Map();
-    for (const { calculation, dataset } of completed) {
-      const key = `${dataset.Id || dataset.Name}|${dataset.Version || ""}`;
+    for (const { calculation, dataset, searchResult } of completed) {
+      const matchType = searchResult?.matchType || "material-search";
+      const key = `${dataset.Id || dataset.Name}|${dataset.Version || ""}|${matchType}|${searchResult?.category || ""}`;
       const group = groupedDatasets.get(key);
       if (group) {
         group.count += 1;
       } else {
-        groupedDatasets.set(key, { dataset, calculation, count: 1 });
+        groupedDatasets.set(key, { dataset, calculation, searchResult, count: 1 });
       }
     }
-    const datasetSources = [...groupedDatasets.values()].map(({ dataset, calculation, count }) =>
-      `<li><strong>${escapeHtml(dataset.Name || "ÖKOBAUDAT-Datensatz")}</strong> · Version ${escapeHtml(dataset.Version || "nicht angegeben")}
-        <span>${getDatasetSourceLink(dataset) || "ÖKOBAUDAT-Quelle: sicherer Datensatzlink nicht verfügbar"}</span>
+    const datasetSources = [...groupedDatasets.values()].map(({ dataset, calculation, searchResult, count }) =>
+      `<li><strong>${escapeHtml(dataset.Name || "Materialdaten-Datensatz")}</strong> · Version ${escapeHtml(dataset.Version || "nicht angegeben")}
+        <span>${getDatasetSourceLink(dataset) || "Quelle: sicherer Datensatzlink nicht verfügbar"}</span>
         <span>${formatNumber(calculation.gwp)} kg CO₂-eq je ${formatNumber(calculation.referenceAmount)} ${escapeHtml(readableText(calculation.datasetUnit))} · Referenzjahr ${escapeHtml(dataset.ReferenceYear || "nicht angegeben")} · ${escapeHtml(dataset.Owner || "Dateneigner nicht angegeben")}</span>
+        <span>${escapeHtml(getSourceLicenseText(searchResult, dataset))}${searchResult.matchType === "category-suggestion" ? ` · Kategorie-Vorschlag ${escapeHtml(searchResult.category)}, manuell gewählt` : ""}</span>
         <span>${count} ${count === 1 ? "Bauteil" : "Bauteile"} · ${escapeHtml(getDatasetValidityText(dataset))}</span></li>`).join("");
     modelTotal.innerHTML = `<div class="ifc-total-main">
         <div>
-          <p class="ifc-total-eyebrow">${pagesDemo ? "Demo-Rechenvorschau · synthetische GWP-Werte" : "ÖKOBAUDAT-Schätzung · A1–A3-Teilbilanz"}</p>
+          <p class="ifc-total-eyebrow">${pagesDemo ? "Demo-Rechenvorschau · synthetische GWP-Werte" : "Katalog-Schätzung · A1–A3-Teilbilanz"}</p>
           <p class="ifc-total-number">${formatNumber(subtotal)} <span>kg CO₂-eq</span></p>
           <p class="ifc-total-caption">${escapeHtml(scopeExplanation)} ${escapeHtml(fileScopeWarning)}</p>
         </div>
@@ -700,8 +822,8 @@ function renderIfcResults() {
       </div>
       <p class="ifc-total-method">${pagesDemo
         ? "<strong>Demo-Rechenvorschau:</strong> Die Formel illustriert nur den IFC-Import mit synthetischen Beispielwerten. Kein Quellenbeleg, keine reale oder geprüfte Ökobilanz."
-        : "<strong>Systemgrenze:</strong> Produktionsphase A1–A3 nach EN 15804+A2, nicht der gesamte Lebenszyklus. <strong>Rechenweg:</strong> Summe aus (IFC-Menge ÷ Bezugsmenge) × ÖKOBAUDAT-GWP."}</p>
-      <div class="ifc-total-sources"><h3>${pagesDemo ? "Verwendete Demo-Beispiele" : "Verwendete ÖKOBAUDAT-Datensätze"}</h3><ul>${datasetSources}</ul></div>
+        : "<strong>Systemgrenze:</strong> Produktionsphase A1–A3 nach EN 15804+A2, nicht der gesamte Lebenszyklus. <strong>Rechenweg:</strong> Summe aus (IFC-Menge ÷ Bezugsmenge) × GWP des jeweils belegten Datensatzes."}</p>
+      <div class="ifc-total-sources"><h3>${pagesDemo ? "Verwendete Demo-Beispiele" : "Verwendete Materialdatensätze"}</h3><ul>${datasetSources}</ul></div>
       <p class="ifc-total-limit">${pagesDemo
         ? "Dieser Rechenwert dient ausschließlich zur Bedienvorschau. Die GWP-Werte sind synthetisch und dürfen nicht als reale, geprüfte Bilanz verwendet werden."
         : "Komponentenbasierte Schätzung, keine geprüfte Vollbilanz. Das Qualitätslabel beschreibt Datenlage und Zuordnung, keine statistische Genauigkeit; eine belastbare Unsicherheitsspanne liegt nicht vor."}</p>`;
@@ -785,22 +907,17 @@ modelFile.addEventListener("change", async () => {
       ifcState.materialSearch.set(material, search);
       modelStatus.textContent = pagesDemo
         ? `IFC lokal gelesen. Suche Demo-Beispiele für „${material}“ …`
-        : `IFC lokal gelesen. Suche ÖKOBAUDAT-Datensätze für „${material}“ …`;
+        : `IFC lokal gelesen. Suche Materialdatensätze für „${material}“ …`;
       renderIfcResults();
       if (material.trim().length < 2) {
         search.loading = false;
-        search.error = "Materialname ist zu kurz für die ÖKOBAUDAT-Suche.";
+        search.error = "Materialname ist zu kurz für die Materialdatensuche.";
         continue;
       }
       try {
-        const data = pagesDemo
-          ? searchDemoData(material)
-          : await requestJson(`/api/search?q=${encodeURIComponent(material)}`);
+        const materialSearch = await searchIfcMaterial(material);
         if (revision !== modelLoadRevision) return;
-        search.items = flattenSearchResults(data)
-          .filter((item) => item?.Id && item?.Version)
-          .filter((item, index, list) => list.findIndex((other) =>
-            other.Id === item.Id && other.Version === item.Version) === index);
+        Object.assign(search, materialSearch);
       } catch (error) {
         if (revision !== modelLoadRevision) return;
         search.error = error.message;
@@ -809,7 +926,7 @@ modelFile.addEventListener("change", async () => {
       }
     }
     if (revision !== modelLoadRevision) return;
-    modelStatus.textContent = `${file.name} wurde lokal ausgewertet. Wähle pro Bauteil einen Datensatz und eine passende IFC-Menge; es werden keine Mengen geschätzt.`;
+    modelStatus.textContent = `${file.name} wurde lokal ausgewertet. Alle erkannten Bauteile bleiben sichtbar; Kategorie-Vorschläge sind keine bestätigte Produktgleichheit. Werte werden nur mit ausgewähltem Datensatz und passender IFC-Menge berechnet.`;
     renderIfcResults();
   } catch (error) {
     if (revision !== modelLoadRevision) return;
@@ -818,3 +935,158 @@ modelFile.addEventListener("change", async () => {
     renderIfcResults();
   }
 });
+
+const localImportSection = document.querySelector("#local-import");
+const importFile = document.querySelector("#user-import-file");
+const importTemplateButton = document.querySelector("#user-import-template");
+const importStatus = document.querySelector("#user-import-status");
+const importPreviewSection = document.querySelector("#user-import-preview");
+const importSummary = document.querySelector("#user-import-summary");
+const importErrors = document.querySelector("#user-import-errors");
+const importSamples = document.querySelector("#user-import-samples");
+const importRights = document.querySelector("#user-import-rights");
+const importConfirmButton = document.querySelector("#user-import-confirm");
+const importDiscardButton = document.querySelector("#user-import-discard");
+const importBatchesSection = document.querySelector("#user-import-batches");
+const importBatchList = document.querySelector("#user-import-batch-list");
+let currentImportPreview = null;
+
+function setImportStatus(text, state = "") {
+  importStatus.hidden = !text;
+  importStatus.className = `user-import-status ${state}`.trim();
+  importStatus.textContent = text;
+}
+
+function renderImportPreview(preview) {
+  currentImportPreview = preview;
+  importPreviewSection.hidden = false;
+  importRights.checked = false;
+  importSummary.textContent =
+    `${preview.rowCount} Zeilen · ${preview.validRowCount} neue gültige Datensätze · ${preview.duplicateRowCount} unveränderte Duplikate übersprungen · ${preview.errorRowCount} Zeilen mit Fehlern.`;
+  importErrors.innerHTML = (preview.errors || []).map((issue) =>
+    `<li>Zeile ${escapeHtml(issue.row)}${issue.field ? ` · ${escapeHtml(issue.field)}` : ""}: ${escapeHtml(issue.message)}</li>`).join("");
+  importSamples.innerHTML = (preview.samples || []).map((sample) =>
+    `<li><strong>${escapeHtml(sample.productName)}</strong> · ${escapeHtml(sample.sourceName)} · ID ${escapeHtml(sample.sourceRecordId)} · ${sample.gwpAvailable ? "GWP" : "ohne GWP"}${sample.solarReflectanceAvailable ? " · Solarreflexion" : ""}</li>`).join("");
+  importConfirmButton.disabled = preview.validRowCount < 1;
+}
+
+async function refreshImportBatches() {
+  const data = await requestJson("/api/import/list");
+  importBatchesSection.hidden = data.batches.length === 0;
+  importBatchList.innerHTML = data.batches.map((batch) => `
+    <li>
+      <div><strong>${escapeHtml((batch.sourceNames || []).join(", ") || "Benutzerimport")}</strong>
+        <small>${escapeHtml(batch.recordCount)} Datensätze · ${escapeHtml(batch.importedAt)} · Rechte nicht unabhängig verifiziert</small></div>
+      <button type="button" class="user-import-remove" data-import-batch="${escapeHtml(batch.id)}">Import entfernen</button>
+    </li>`).join("");
+}
+
+if (!pagesDemo) {
+  localImportSection.hidden = false;
+  refreshImportBatches().catch((error) => {
+    setImportStatus(`Lokale Imports konnten nicht geladen werden: ${error.message}`, "error");
+  });
+
+  importTemplateButton.addEventListener("click", () => {
+    const header = [
+      "SourceName", "SourceRecordId", "Version", "ProductName", "Category",
+      "Unit", "ReferenceAmount", "GwpKgCO2e", "Standard", "Modules",
+      "ValidUntil", "SourceUrl", "LicenseNotice", "SolarReflectancePercent",
+      "SolarReflectanceMethod", "SolarReflectanceWavelength",
+    ].join(",");
+    const url = URL.createObjectURL(new Blob([`\uFEFF${header}\r\n`], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "materialdaten-vorlage.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  });
+
+  importFile.addEventListener("change", async () => {
+    const file = importFile.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setImportStatus("Die CSV-Datei überschreitet das Limit von 5 MiB.", "error");
+      importFile.value = "";
+      return;
+    }
+    setImportStatus("CSV wird lokal geprüft; es werden noch keine Daten gespeichert.", "loading");
+    importPreviewSection.hidden = true;
+    currentImportPreview = null;
+    try {
+      const preview = await requestJson("/api/import/preview", {
+        method: "POST",
+        headers: { "Content-Type": "text/csv;charset=utf-8" },
+        body: file,
+      });
+      renderImportPreview(preview);
+      setImportStatus("Vorschau bereit. Erst nach deiner Rechtebestätigung werden gültige Datensätze lokal gespeichert.", "success");
+    } catch (error) {
+      setImportStatus(`CSV konnte nicht geprüft werden: ${error.message}`, "error");
+    }
+  });
+
+  importRights.addEventListener("change", () => {
+    importConfirmButton.disabled = !currentImportPreview || currentImportPreview.validRowCount < 1 || !importRights.checked;
+  });
+
+  importDiscardButton.addEventListener("click", async () => {
+    if (!currentImportPreview) return;
+    try {
+      await requestJson("/api/import/discard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ previewId: currentImportPreview.previewId }),
+      });
+      currentImportPreview = null;
+      importPreviewSection.hidden = true;
+      importFile.value = "";
+      setImportStatus("Vorschau verworfen; es wurden keine Daten gespeichert.", "success");
+    } catch (error) {
+      setImportStatus(`Vorschau konnte nicht verworfen werden: ${error.message}`, "error");
+    }
+  });
+
+  importConfirmButton.addEventListener("click", async () => {
+    if (!currentImportPreview || !importRights.checked) return;
+    importConfirmButton.disabled = true;
+    setImportStatus("Gültige Datensätze werden lokal gespeichert …", "loading");
+    try {
+      const imported = await requestJson("/api/import/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ previewId: currentImportPreview.previewId, rightsConfirmed: true }),
+      });
+      currentImportPreview = null;
+      importPreviewSection.hidden = true;
+      importFile.value = "";
+      setImportStatus(`${imported.importedRecordCount} Datensätze lokal übernommen. Neue Material- und IFC-Suchen berücksichtigen sie.`, "success");
+      await refreshImportBatches();
+      if (ifcState && modelFile.files?.length) modelFile.dispatchEvent(new Event("change"));
+    } catch (error) {
+      setImportStatus(`Import nicht gespeichert: ${error.message}`, "error");
+      importConfirmButton.disabled = false;
+    }
+  });
+
+  importBatchList.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-import-batch]");
+    if (!button) return;
+    const batchId = button.dataset.importBatch;
+    if (!window.confirm("Diesen lokalen Import und seine Datensätze entfernen?")) return;
+    button.disabled = true;
+    try {
+      await requestJson("/api/import/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batchId }),
+      });
+      setImportStatus("Import entfernt. Er wird ab jetzt nicht mehr in Suchen oder Berechnungen verwendet.", "success");
+      await refreshImportBatches();
+      if (ifcState && modelFile.files?.length) modelFile.dispatchEvent(new Event("change"));
+    } catch (error) {
+      button.disabled = false;
+      setImportStatus(`Import konnte nicht entfernt werden: ${error.message}`, "error");
+    }
+  });
+}

@@ -7,6 +7,8 @@ import {
   flattenSearchResults,
   isDatasetValid,
   parseIfcText,
+  suggestIfcMaterialCategory,
+  uniqueIfcSearchCandidates,
 } from "../public/ifc.mjs";
 
 function makeIfc({ schema = "IFC4", records = "", directMaterial = true } = {}) {
@@ -149,6 +151,29 @@ test("keeps explicitly contained elements with missing material or quantity data
   assert.equal(unmeasured.quantities.length, 0);
 });
 
+test("includes supported IFC components without material, quantities, or relations", () => {
+  const model = parseIfcText(makeIfc({
+    records: "#13=IFCWALL('orphan-wall',$,'Unzugeordnete Wand',$,$,$,$,$);",
+  }));
+  const unassigned = model.elements.find((element) => element.id === "13");
+  assert.ok(unassigned);
+  assert.equal(unassigned.materialStatus, "missing");
+  assert.deepEqual(unassigned.quantities, []);
+  assert.equal(unassigned.contained, false);
+});
+
+test("material category matching returns suggestions, not exact matches", () => {
+  assert.deepEqual(suggestIfcMaterialCategory("Concrete C30/37"), {
+    name: "Beton",
+    query: "Beton",
+  });
+  assert.deepEqual(suggestIfcMaterialCategory("Wood fibre board"), {
+    name: "Holzfaser",
+    query: "Holzfaser",
+  });
+  assert.equal(suggestIfcMaterialCategory("mystery composite"), null);
+});
+
 test("rejects empty, malformed, incomplete, and unsupported IFC files", () => {
   assert.throws(() => parseIfcText(""), /leer/);
   assert.throws(() => parseIfcText("not an IFC file"), /Kopf/);
@@ -202,6 +227,12 @@ test("assesses estimate quality from valid records, explicit mappings, and model
   assert.equal(assessProjectDataQuality([exactEntry], false).level, "limited");
   assert.equal(assessProjectDataQuality([{ ...exactEntry, contained: false }], true).level, "limited");
   assert.equal(assessProjectDataQuality([], false).level, "none");
+
+  const categorySuggestion = assessProjectDataQuality([
+    { ...exactEntry, matchType: "category-suggestion" },
+  ], true);
+  assert.equal(categorySuggestion.level, "limited");
+  assert.match(categorySuggestion.explanation, /Materialkategorie-Vorschlag/);
 });
 
 test("rejects incompatible, missing, invalid, and negative calculation inputs", () => {
@@ -252,5 +283,47 @@ test("flattens the existing grouped ÖKOBAUDAT search response", () => {
   assert.deepEqual(
     flattenSearchResults({ groups: [{ PeerGroups: [{ Items: [item] }] }] }),
     [item],
+  );
+});
+
+test("keeps static demo candidates without version fields and removes duplicate records", () => {
+  const item = { Id: "demo-1", Name: "synthetic example" };
+  const results = uniqueIfcSearchCandidates({
+    groups: [{ PeerGroups: [{ Items: [item, { ...item }, { Name: "no id" }] }] }],
+  });
+  assert.deepEqual(results, [item]);
+});
+
+test("keeps a solar-only local import visible without allowing a fabricated GWP contribution", () => {
+  const solarOnlyImport = {
+    Id: "USER-import-1",
+    Version: "1.0",
+    RecordKind: "user-import",
+    Name: "Pine cladding",
+    Unit: "",
+    ReferenceAmount: "",
+    Gwp: null,
+    Validity: "unknown",
+    SolarReflectance: {
+      Value: 45.2,
+      Unit: "%",
+      Method: "EN 410",
+      Wavelength: "300-2500 nm",
+      SourceName: "Example source",
+    },
+  };
+  const candidates = uniqueIfcSearchCandidates({
+    groups: [{ PeerGroups: [{ Items: [solarOnlyImport] }] }],
+  });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].SolarReflectance.Value, 45.2);
+  assert.equal(isDatasetValid(candidates[0]), false);
+  assert.throws(
+    () => calculateContribution(
+      { dimension: "area", canonicalValue: 1, unit: "m²" },
+      candidates[0],
+    ),
+    /Gültigkeit.*unbekannt/,
   );
 });

@@ -16,9 +16,13 @@ const html = await readFile(indexPath, "utf8");
 if (!html.includes("</head>")) {
   throw new Error("public/index.html must contain a closing </head> tag.");
 }
+const pagesHtml = html.replace(
+  /\s*<section id="local-import"[\s\S]*?<\/section>/,
+  "",
+);
 await writeFile(
   indexPath,
-  html.replace("</head>", "  <script>window.__PAGES_DEMO__ = true;</script>\n</head>"),
+  pagesHtml.replace("</head>", "  <script>window.__PAGES_DEMO__ = true;</script>\n</head>"),
   "utf8",
 );
 await writeFile(path.join(outputDirectory, ".nojekyll"), "", "utf8");
