@@ -7,6 +7,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+where git.exe >nul 2>nul
+if errorlevel 1 (
+    echo Fehler: Git wurde nicht gefunden. Die App wird nicht gestartet.
+    pause
+    exit /b 1
+)
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$repo = (Get-Location).Path; & git -C $repo rev-parse --show-toplevel 2>$null | Out-Null; if ($LASTEXITCODE -ne 0) { Write-Host 'Fehler: Dieses Verzeichnis ist kein Git-Repository. Die App wird nicht gestartet.'; exit 10 }; $branch = & git -C $repo branch --show-current 2>$null; if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { Write-Host ('Fehler: Automatische Aktualisierungen sind nur auf main erlaubt (aktuell: ' + $branch + '). Die App wird nicht gestartet.'); exit 11 }; $changes = & git -C $repo status --porcelain --untracked-files=all 2>$null; if ($LASTEXITCODE -ne 0) { Write-Host 'Fehler: Der Git-Arbeitsbaum konnte nicht geprueft werden. Die App wird nicht gestartet.'; exit 12 }; if ($changes) { Write-Host 'Fehler: Lokale Aenderungen gefunden. Es wurde nichts aktualisiert, damit keine Arbeit ueberschrieben wird. Bitte Aenderungen sichern und erneut starten.'; exit 13 }; Write-Host 'Suche nach einer neueren Version...'; & git -C $repo fetch --quiet origin main 2>$null; if ($LASTEXITCODE -ne 0) { Write-Host 'Fehler: git fetch origin main ist fehlgeschlagen. Kein aktueller Stand ist garantiert; die App wird nicht gestartet.'; exit 14 }; & git -C $repo merge --quiet --ff-only origin/main 2>$null; if ($LASTEXITCODE -ne 0) { Write-Host 'Fehler: main konnte nicht sicher per Fast-Forward aktualisiert werden. Es wurde nichts erzwungen; die App wird nicht gestartet.'; exit 15 }; Write-Host 'Die lokale App ist auf dem neuesten Stand.'; exit 0"
+if errorlevel 1 (
+    echo Die App wurde nicht gestartet. Siehe Meldung oben.
+    pause
+    exit /b 1
+)
+
 if not exist "%~dp0server.ps1" (
     echo Fehler: server.ps1 wurde neben Start-App.bat nicht gefunden.
     pause
