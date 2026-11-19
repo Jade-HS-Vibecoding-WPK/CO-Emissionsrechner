@@ -8,6 +8,7 @@ on:
       - "public/**"
       - "scripts/build-pages.mjs"
       - "tests/cursor.test.mjs"
+      - "tests/ifc-disclosure.test.mjs"
       - "tests/pages-demo.test.mjs"
       - "README.md"
   workflow_dispatch:
@@ -27,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test Pages demo
-        run: node --test tests/pages-demo.test.mjs tests/ifc.test.mjs tests/public-sources.test.mjs tests/cursor.test.mjs
+        run: node --test tests/pages-demo.test.mjs tests/ifc.test.mjs tests/ifc-disclosure.test.mjs tests/public-sources.test.mjs tests/cursor.test.mjs
       - name: Build static site
         run: node scripts/build-pages.mjs
       - uses: actions/upload-pages-artifact@v3

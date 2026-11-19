@@ -36,6 +36,8 @@ Der Parser verwendet direkte Materialzuordnungen; eine Materialzuordnung am Baut
 
 Ein Beitrag wird nur aus einer passenden expliziten IFC-Menge und einem gültigen Datensatz berechnet, wenn Dimension, Einheit, Bezugsmenge, Standard und Module zusammenpassen. Abgelaufene oder in der Gültigkeit unbekannte Datensätze sowie nicht auflösbare Positionen bleiben ohne Beitrag; es werden keine Mengen oder GWP-Werte erfunden. Die Summe ist eine A1–A3-Teilbilanz, keine geprüfte Gebäudebilanz. Die Datenqualitätsanzeige bewertet unter anderem Zuordnung, Menge, Gültigkeit und IFC-Raumstruktur; sie ist weder eine statistische Unsicherheitsspanne noch ein Vollständigkeitsnachweis.
 
+Die zentrale Schaltfläche „Alle Bauteile einklappen“ blendet die gesamte Bauteilliste gemeinsam aus; „Alle Bauteile ausklappen“ zeigt sie wieder. Bauteilzähler, kompakter Status und A1–A3-Endbilanz bleiben sichtbar. Dabei bleiben IFC-Daten, Auswahlen und Berechnungen erhalten. Diese Aktion ist von den einzelnen Detail-Schaltflächen und dem Detail-Sammelknopf getrennt: Letztere blenden nur die Zuordnungs- und Mengendetails innerhalb der weiterhin sichtbaren Bauteile ein oder aus. Die Steuerung ist per Tastatur bedienbar und stellt ihren Zustand über `aria-expanded`/`aria-controls` bereit.
+
 Die relativen Labels „gut“, „mittel“ und „schlecht“ gelten nur innerhalb ausreichend großer, gültiger und kompatibler ÖKOBAUDAT-Vergleichsgruppen. Sie sind keine absolute Umweltbewertung und bestätigen keine technische Gleichwertigkeit. Der bedingte Alternativen-Check ist kein Nachweis einer funktionalen Materialsubstitution. Solarreflexion wird, falls im Datensatz vorhanden, mit Einheit und Messangaben separat angezeigt und nicht in GWP eingerechnet.
 
 ## Lokale CSV-Importe und Datenschutz
@@ -49,12 +51,12 @@ Die angegebene Herkunft und Rechtebestätigung werden nicht unabhängig geprüft
 Für die JavaScript-Tests wird Node.js benötigt; `tests\search.test.ps1` und `tests\imports.test.ps1` benötigen Windows PowerShell:
 
 ```powershell
-node --test tests\ifc.test.mjs tests\hero.test.mjs tests\public-sources.test.mjs tests\pages-demo.test.mjs tests\cursor.test.mjs
+node --test tests\ifc.test.mjs tests\ifc-disclosure.test.mjs tests\hero.test.mjs tests\public-sources.test.mjs tests\pages-demo.test.mjs tests\cursor.test.mjs
 powershell -NoProfile -File tests\search.test.ps1
 powershell -NoProfile -File tests\imports.test.ps1
 ```
 
-Die Tests decken unter anderem IFC-Parsing und -Berechnung, lokale Suche und CSV-Import, Quellenhinweise, Cursor sowie synthetischen Pages-Build ab. Der Pages-Workflow führt die JavaScript-Tests für Pages, IFC, Quellen und Cursor aus.
+Die Tests decken unter anderem IFC-Parsing und -Berechnung, gemeinsames Ein-/Ausblenden der Bauteilliste samt Erhalt von Auswahl und Endergebnis, lokale Suche und CSV-Import, Quellenhinweise, Cursor sowie synthetischen Pages-Build ab. Der Pages-Workflow führt die JavaScript-Tests für Pages, IFC, Quellen, Bauteilliste und Cursor aus.
 
 ## Quellen, Lizenz und KI-Nutzung
 

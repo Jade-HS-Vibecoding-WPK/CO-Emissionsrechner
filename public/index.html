@@ -119,21 +119,27 @@
         </div>
         <p id="ifc-results-summary" role="status" aria-live="polite"></p>
       </div>
-      <div class="ifc-table-wrap">
-        <table class="ifc-table">
-          <thead>
-            <tr>
-              <th scope="col">Bauteil</th>
-              <th scope="col">Material / ÖKOBAUDAT-Datensatz</th>
-              <th scope="col">IFC-Menge</th>
-              <th scope="col">A1–A3-Beitrag</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody id="ifc-results-body"></tbody>
-        </table>
-      </div>
       <div id="ifc-total" class="ifc-total" aria-live="polite"></div>
+      <div class="ifc-results-actions">
+        <p>Die gesamte Bauteilliste lässt sich gemeinsam ausblenden; Zähler, Status und Endbilanz bleiben sichtbar.</p>
+        <button id="ifc-toggle-components" class="ifc-toggle-button" type="button" data-ifc-list-toggle aria-expanded="true" aria-controls="ifc-component-list">Alle Bauteile einklappen</button>
+      </div>
+      <div id="ifc-component-list">
+        <div class="ifc-table-wrap">
+          <table class="ifc-table">
+            <thead>
+              <tr>
+                <th scope="col">Bauteil</th>
+                <th scope="col">Material / ÖKOBAUDAT-Datensatz</th>
+                <th scope="col">IFC-Menge</th>
+                <th scope="col">A1–A3-Beitrag</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody id="ifc-results-body"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <section class="comparison-legend" aria-labelledby="legend-title">

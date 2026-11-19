@@ -1963,13 +1963,14 @@ function Handle-Request {
         '/swiss.css' = 'swiss.css'
         '/app.js' = 'app.js'
         '/ifc.mjs' = 'ifc.mjs'
+        '/ifc-disclosure.mjs' = 'ifc-disclosure.mjs'
         '/demo-data.mjs' = 'demo-data.mjs'
         '/hero-landscape.svg' = 'hero-landscape.svg'
         '/tree-cursor.svg' = 'tree-cursor.svg'
     }
     if ($staticFiles.ContainsKey($path)) {
         $file = Join-Path (Join-Path $script:Root 'public') $staticFiles[$path]
-        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js' -or $path -eq '/ifc.mjs' -or $path -eq '/demo-data.mjs') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/hero-landscape.svg' -or $path -eq '/tree-cursor.svg') { 'image/svg+xml; charset=utf-8' } else { 'text/css; charset=utf-8' }
+        $contentType = if ($path -eq '/') { 'text/html; charset=utf-8' } elseif ($path -eq '/app.js' -or $path -eq '/ifc.mjs' -or $path -eq '/ifc-disclosure.mjs' -or $path -eq '/demo-data.mjs') { 'text/javascript; charset=utf-8' } elseif ($path -eq '/hero-landscape.svg' -or $path -eq '/tree-cursor.svg') { 'image/svg+xml; charset=utf-8' } else { 'text/css; charset=utf-8' }
         $bytes = [System.IO.File]::ReadAllBytes($file)
         Send-Response -Context $Context -StatusCode 200 -ContentType $contentType -Body $bytes
         return

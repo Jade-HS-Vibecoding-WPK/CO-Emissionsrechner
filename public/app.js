@@ -7,6 +7,13 @@ import {
   suggestIfcMaterialCategory,
   uniqueIfcSearchCandidates,
 } from "./ifc.mjs";
+import {
+  createCollapsedIfcRows,
+  getIfcComponentListControl,
+  getIfcDisclosureAttributes,
+  toggleIfcComponentList,
+  toggleIfcRow,
+} from "./ifc-disclosure.mjs";
 import { getDemoDetail, searchDemoData } from "./demo-data.mjs";
 
 const form = document.querySelector("#search-form");
@@ -633,6 +640,14 @@ function renderIfcResults() {
   }
 
   modelResults.hidden = false;
+  const componentList = modelResults.querySelector("#ifc-component-list");
+  const componentListButton = modelResults.querySelector("#ifc-toggle-components");
+  const componentListControl = getIfcComponentListControl(ifcState.componentListCollapsed);
+  componentList.hidden = componentListControl.hidden;
+  componentListButton.textContent = componentListControl.label;
+  componentListButton.setAttribute("aria-expanded", String(componentListControl.expanded));
+  componentListButton.setAttribute("aria-controls", componentListControl.controls);
+  componentListButton.disabled = ifcState.rows.length === 0;
   const completed = [];
   const unresolved = [];
   const assessmentEntries = [];
@@ -746,6 +761,16 @@ function renderIfcResults() {
     const contributionCell = calculation
       ? `<strong>${formatNumber(calculation.contribution)} kg CO₂-eq</strong><small>${formatNumber(calculation.gwp)} kg CO₂-eq × ${formatNumber(calculation.datasetQuantity)} ${escapeHtml(readableText(calculation.datasetUnit))} ÷ ${formatNumber(calculation.referenceAmount)} ${escapeHtml(readableText(calculation.datasetUnit))}</small>`
       : "<span>—</span>";
+    const collapsed = ifcState.collapsedRows.has(index);
+    const disclosure = getIfcDisclosureAttributes(index, element.name, collapsed);
+    const materialSummary = material
+      ? `<strong>${escapeHtml(material)}</strong><small>${escapeHtml(element.materialSource ? `Zuordnung aus ${element.materialSource}` : "Materialquelle nicht angegeben")}</small>${dataset ? `<small>${escapeHtml(dataset.Name || "Datensatz ausgewählt")}</small>` : ""}`
+      : `<strong>${element.materials.length ? element.materials.map(escapeHtml).join(", ") : "Material fehlt"}</strong><small>${element.materialStatus === "ambiguous" ? "Mehrdeutige Zuordnung" : "Keine eindeutige Zuordnung"}</small>`;
+    const quantitySummary = quantity
+      ? getQuantityLabel(quantity)
+      : element.quantities.length
+        ? `${element.quantities.length} IFC-Mengen verfügbar`
+        : "Keine IFC-Menge";
 
     assessmentEntries.push({
       calculation,
@@ -755,14 +780,34 @@ function renderIfcResults() {
       matchType: searchResult?.matchType,
     });
     return `<tr>
-      <th scope="row"><strong>${escapeHtml(element.name)}</strong><small>${escapeHtml(element.type)} · #${escapeHtml(element.id)}</small></th>
-      <td>${materialCell}</td>
-      <td><label class="ifc-control-label" for="ifc-quantity-${index}">Menge</label>
-        <select id="ifc-quantity-${index}" data-ifc-quantity="${index}" aria-label="IFC-Menge für ${escapeHtml(element.name)}">
-          <option value="">Menge auswählen</option>${quantityOptions}
-        </select></td>
-      <td>${contributionCell}</td>
-      <td><span class="ifc-row-status ${statusClass}">${escapeHtml(status)}</span></td>
+      <th scope="row">
+        <button class="ifc-disclosure-button" type="button" data-ifc-row-toggle="${index}" aria-expanded="${disclosure.expanded}" aria-controls="${disclosure.id}" aria-label="${escapeHtml(disclosure.label)}">
+          <span aria-hidden="true">${collapsed ? "+" : "−"}</span>
+          <span>Details ${collapsed ? "anzeigen" : "verbergen"}</span>
+        </button>
+        <strong>${escapeHtml(element.name)}</strong><small>${escapeHtml(element.type)} · #${escapeHtml(element.id)}</small>
+      </th>
+      <td>${materialSummary}</td>
+      <td>${escapeHtml(quantitySummary)}</td>
+      <td>${calculation ? `<strong>${formatNumber(calculation.contribution)} kg CO₂-eq</strong>` : "<span>—</span>"}</td>
+      <td><span class="ifc-row-status ${statusClass}">${calculation ? "Berechnet" : "Nicht berechnet"}</span></td>
+    </tr>
+    <tr id="${disclosure.id}" class="ifc-details-row" ${collapsed ? "hidden" : ""}>
+      <td colspan="5">
+        <div class="ifc-component-details-grid">
+          <section><h3>Material und Datensatz</h3>${materialCell}</section>
+          <section><h3>IFC-Menge</h3>
+            <label class="ifc-control-label" for="ifc-quantity-${index}">Menge für ${escapeHtml(element.name)}</label>
+            <select id="ifc-quantity-${index}" data-ifc-quantity="${index}" aria-label="IFC-Menge für ${escapeHtml(element.name)}">
+              <option value="">Menge auswählen</option>${quantityOptions}
+            </select>
+          </section>
+          <section><h3>Berechnung und Status</h3>
+            <span class="ifc-row-status ${statusClass}">${escapeHtml(status)}</span>
+            ${calculation ? `<div class="ifc-calculation-detail">${contributionCell}</div>` : ""}
+          </section>
+        </div>
+      </td>
     </tr>`;
   }).join("");
 
@@ -830,6 +875,23 @@ function renderIfcResults() {
   }
 }
 
+modelResults.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-ifc-row-toggle], [data-ifc-list-toggle]");
+  if (!button || !ifcState) return;
+
+  if (button.matches("[data-ifc-list-toggle]")) {
+    ifcState.componentListCollapsed = toggleIfcComponentList(ifcState.componentListCollapsed);
+    renderIfcResults();
+    return;
+  }
+
+  const index = Number(button.dataset.ifcRowToggle);
+  if (!Number.isInteger(index) || !ifcState.rows[index]) return;
+  toggleIfcRow(ifcState.collapsedRows, index);
+  renderIfcResults();
+  modelResultsBody.querySelector(`[data-ifc-row-toggle="${index}"]`)?.focus();
+});
+
 modelResults.addEventListener("change", (event) => {
   const control = event.target;
   const datasetIndex = Number(control.dataset.ifcDataset);
@@ -896,6 +958,8 @@ modelFile.addEventListener("change", async () => {
         selectedDatasetIndex: null,
         selectedQuantityIndex: null,
       })),
+      collapsedRows: createCollapsedIfcRows(parsed.elements.length),
+      componentListCollapsed: false,
       materialSearch: new Map(),
     };
     const materialNames = [...new Set(parsed.elements
