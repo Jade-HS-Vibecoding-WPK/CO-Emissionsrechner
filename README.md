@@ -1,6 +1,18 @@
 # CO-Emissionsrechner
 
-Ein Entwurfswerkzeug zur Suche und zum Vergleich von Baustoff-Datensätzen sowie zur lokalen Auswertung von IFC-Mengen. Die Anwendung ist in zwei Varianten verfügbar: als lokale Windows-App mit PowerShell-Backend und Live-ÖKOBAUDAT-CSV-Katalog oder als statische GitHub-Pages-Demo mit synthetischen Beispieldaten.
+Ein Entwurfswerkzeug zur Suche und zum Vergleich von Baustoff-Datensätzen sowie zur lokalen Auswertung von IFC-Mengen.
+
+**[Live-Demo öffnen](https://jade-hs-vibecoding-wpk.github.io/CO-Emissionsrechner/)**
+
+## Screenshots
+
+### Startseite
+
+![Startseite der statischen Demo mit Hinweis auf synthetische Beispieldaten.](docs/screenshots/homepage.png)
+
+### Materialsuche
+
+![Suche nach Dämmung mit einem synthetischen Demo-Treffer und 18 kg CO₂-eq.](docs/screenshots/material-search.png)
 
 ## Start und Voraussetzungen
 
@@ -15,15 +27,6 @@ Das Backend stellt unter anderem `/api/health`, `/api/search` und `/api/detail` 
 Die veröffentlichte Demo ist unter <https://jade-hs-vibecoding-wpk.github.io/CO-Emissionsrechner/> erreichbar. `.github/workflows/pages.yml` testet die statische Demo, baut sie mit `scripts/build-pages.mjs` aus `public\` und veröffentlicht das Artefakt über GitHub Pages. Der Workflow läuft bei passenden Änderungen auf `main` oder manuell über `workflow_dispatch`; für das Repository muss Pages mit „GitHub Actions“ eingerichtet sein.
 
 Pages enthält ausschließlich ausdrücklich synthetische Beispieldaten. Es gibt dort kein PowerShell-Backend, keine Live-ÖKOBAUDAT-Suche und keinen CSV-Upload. Auch die IFC-Rechenvorschau verwendet nur synthetische Demo-Werte und ist keine reale Bilanz. Der Pages-Build entfernt den lokalen Importbereich. Die Demo speichert weder Uploads noch Importdaten oder eine gemeinsame Datenbank.
-
-## Datenquellen und Grenzen
-
-- **Automatisch ausgewertete Quelle:** Der lokale Server liest die offizielle ÖKOBAUDAT-Downloadseite aus und wählt den dort veröffentlichten CSV-Export samt Release und Datenstock-ID aus. Er validiert den Export und wertet Datensätze nach EN 15804+A2, Modul A1–A3 aus. Cache, Abrufzeit, Release und Warnungen werden in der Provenienz ausgewiesen. Die dokumentierte ÖKOBAUDAT-Datenaustauschschnittstelle wird nicht direkt angesprochen; die App nutzt den offiziellen CSV-Download.
-- **Herstellersuche:** Herstellernamen können Treffer in den geladenen ÖKOBAUDAT-Datensätzen auffindbar machen. Das sind weiterhin ÖKOBAUDAT-Datensätze, keine automatisch angebundenen Herstellerfeeds. Namen und Schreibvarianten werden nicht ohne Beleg gleichgesetzt; etwa „Wieneberger“ ist kein bestätigtes Alias für „Wienerberger“ und „Rockwoll“ keines für „ROCKWOOL“.
-- **Manuelle Quellenhinweise:** WECOBIS ist als qualitativer Materialkontext verlinkt; veröffentlichte IBU-EPDs können manuell geprüft werden. Keine der beiden Quellen wird automatisch numerisch ausgelesen. IBU.data-XML-Downloads mit Registrierung sowie allgemeine Websuche sind nicht integriert.
-- **Nicht integrierte Anbieter:** KBOB, eco-bau, IPB, ProBas, Global EPD, ECO EPD, Ecoinvent, GaBi, Climatiq, DEFRA, DGNB Navigator, BMWSB, BMWE, BMUKN und weitere Herstellerquellen liefern der App derzeit keine automatischen Zahlen. Zugriff ohne Schlüssel/Registrierung, maschinenlesbares Format und Rechte für Abruf, Speicherung, Anzeige oder Weitergabe sind nicht für jede Quelle geklärt; „IPB“ ist zudem nicht eindeutig identifiziert. Zugangsbeschränkungen und Lizenzbedingungen werden nicht umgangen. Produktkataloge oder öffentliche Produktseiten allein belegen keinen Ökobilanzwert.
-
-ÖKOBAUDAT ist öffentlich zugänglich; eine pauschale Lizenz zur Weitergabe ihrer Inhalte wird nicht behauptet. Die App weist den ungeprüften Weitergabestatus aus und kopiert den Katalog weder ins Repository noch ins Pages-Bundle. Datenstand, Gültigkeit, Bezugsmenge, Einheit und Quelle eines Datensatzes bleiben relevant; ein Suchtreffer ist kein Nachweis der Produkt- oder Funktionsgleichheit.
 
 ## IFC-Import und Auswertung
 
@@ -52,3 +55,23 @@ powershell -NoProfile -File tests\imports.test.ps1
 ```
 
 Die Tests decken unter anderem IFC-Parsing und -Berechnung, lokale Suche und CSV-Import, Quellenhinweise, Cursor sowie synthetischen Pages-Build ab. Der Pages-Workflow führt die JavaScript-Tests für Pages, IFC, Quellen und Cursor aus.
+
+## Quellen, Lizenz und KI-Nutzung
+
+### Quellen und Datenherkunft
+
+- **Lokales Backend:** Der lokale Server liest die offizielle ÖKOBAUDAT-Downloadseite aus und wählt den dort veröffentlichten CSV-Export samt Release und Datenstock-ID aus. Er validiert den Export und wertet Datensätze nach EN 15804+A2, Modul A1–A3 aus. Cache, Abrufzeit, Release und Warnungen werden in der Provenienz ausgewiesen. Die dokumentierte ÖKOBAUDAT-Datenaustauschschnittstelle wird nicht direkt angesprochen; die App nutzt den offiziellen CSV-Download.
+- **GitHub-Pages-Demo:** Die Suche und die GWP-Beispielwerte verwenden ausschließlich synthetische Beispieldaten. Pages bietet keine Live-ÖKOBAUDAT-Suche, kein PowerShell-Backend und keinen CSV-Import; die IFC-Rechenvorschau nutzt ebenfalls synthetische Werte. Die Demo ist damit von der lokalen Nutzung des offiziellen ÖKOBAUDAT-CSV-Exports getrennt.
+- **Herstellersuche:** Herstellernamen können Treffer in geladenen ÖKOBAUDAT-Datensätzen auffindbar machen; das sind keine automatisch angebundenen Herstellerfeeds. Nicht bestätigte Feeds oder Anbieter-Lizenzen werden nicht behauptet. Namen und Schreibvarianten werden nicht ohne Beleg gleichgesetzt; etwa „Wieneberger“ ist kein bestätigtes Alias für „Wienerberger“ und „Rockwoll“ keines für „ROCKWOOL“.
+- **Manuelle Quellenhinweise:** WECOBIS ist als qualitativer Materialkontext verlinkt; veröffentlichte IBU-EPDs können manuell geprüft werden. Keine der beiden Quellen wird automatisch numerisch ausgelesen. IBU.data-XML-Downloads mit Registrierung sowie allgemeine Websuche sind nicht integriert.
+- **Nicht integrierte Anbieter:** KBOB, eco-bau, IPB, ProBas, Global EPD, ECO EPD, Ecoinvent, GaBi, Climatiq, DEFRA, DGNB Navigator, BMWSB, BMWE, BMUKN und weitere Herstellerquellen liefern der App derzeit keine automatischen Zahlen. Zugriff ohne Schlüssel/Registrierung, maschinenlesbares Format und Rechte für Abruf, Speicherung, Anzeige oder Weitergabe sind nicht für jede Quelle geklärt; „IPB“ ist zudem nicht eindeutig identifiziert. Zugangsbeschränkungen und Lizenzbedingungen werden nicht umgangen.
+
+### Lizenz und Weitergabe
+
+Für die lokale App wird der offiziell veröffentlichte ÖKOBAUDAT-CSV-Export entsprechend den dafür geltenden Nutzungs- und Lizenzbedingungen geladen und ausgewertet. Daraus wird keine pauschale Erlaubnis zur Weitergabe der Kataloginhalte abgeleitet: Die App weist den Weitergabestatus als ungeprüft aus und kopiert den Katalog weder ins Repository noch ins Pages-Bundle. In der Pages-Demo sind stattdessen synthetische Beispiele enthalten, keine ÖKOBAUDAT-Datensätze. Datenstand, Gültigkeit, Bezugsmenge, Einheit und Quelle bleiben relevant; ein Suchtreffer belegt weder Produkt- oder Funktionsgleichheit noch Nutzungsrechte. Ein Quellen- oder Herstellername und eine öffentliche Produktseite sind für sich allein kein Lizenz- oder Weitergabebeleg. Bei lokalen CSV-Importen wird auch die Rechtebestätigung der importierenden Person nicht unabhängig geprüft.
+
+Die oben eingebundenen Screenshot-Dateien sind eigene Playwright-Aufnahmen der Live-Demo. Die Materialsuche zeigt ausdrücklich synthetische Demo-Treffer, keine Live-ÖKOBAUDAT-Ergebnisse.
+
+### KI-Nutzung
+
+KI-Werkzeuge wurden zur Unterstützung bei Code und Dokumentation verwendet. Damit werden keine unbelegten Aussagen zu einem bestimmten Modell oder zu Modell-, Daten- oder Inhaltslizenzen getroffen.
